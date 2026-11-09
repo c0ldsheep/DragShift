@@ -1,0 +1,6 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#ddd">
+<script type="module">
+import * as P from "/assets/js/gl/paint.js";
+const show = (c, w) => { c.style.width = w + "px"; c.style.margin = "8px"; c.style.background = "#fff"; document.body.append(c); };
+show(P.stampInk().canvas, 420); show(P.statement(), 300); show(P.formSheet(), 600);
+</script>

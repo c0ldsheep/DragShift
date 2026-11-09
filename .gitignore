@@ -1,0 +1,17 @@
+.build/
+build/
+.swiftpm/
+*.xcodeproj
+.DS_Store
+HANDOFF.md
+
+# Windows build output
+windows/**/bin/
+windows/**/obj/
+
+# Private notes and the rejected website previews: kept on this Mac, never published
+HANDOFF-log.md
+site-five/
+site-next/
+site-ring/
+legal/

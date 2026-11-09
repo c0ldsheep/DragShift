@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- DragShift for Windows. .NET Framework 4.8 ships with every Windows 10 and 11 PC, so the
+       result is one small .exe with nothing to install. Builds on Windows, macOS or Linux. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>DragShift</AssemblyName>
+    <RootNamespace>DragShift</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>AppIcon.ico</ApplicationIcon>
+
+    <Version>1.2.0</Version>
+    <Product>DragShift</Product>
+    <Company>c0ldsheep</Company>
+    <Description>Change any file while you drag it.</Description>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugType>none</DebugType>
+    <GenerateBindingRedirectsOutputType>false</GenerateBindingRedirectsOutputType>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <!-- packages.lock.json records each package's exact version and content hash; the GitHub build restores in
+         locked mode, so a changed or swapped package fails the build instead of shipping -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="Microsoft.VisualBasic" />
+    <!-- Windows' own APIs (OCR, PDF pages, HEIC, video): reference-only, nothing extra ships. -->
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
+    <!-- .NET Framework 4.8's reference assemblies, build-time only. Named here so every machine restores the same set
+         (the SDK adds it on its own only where the targeting pack is missing, which would break the lock file) -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

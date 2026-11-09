@@ -1,0 +1,45 @@
+# Builds DragShift.exe on a real Windows machine, runs the shared-logic tests and the engine self-test,
+# and keeps the .exe plus pictures of the ring as a download on the run's page.
+# Every action is pinned to an exact commit (the comment says which release): a moved or hijacked tag
+# can't change what runs here. To update, look up the new release's commit and change both.
+name: Windows
+
+on:
+  push:
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  pull_request:
+    paths: ["windows/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+      - name: Shared logic tests
+        run: dotnet run --project windows/tests/CoreTests -c Release
+      - name: Build DragShift.exe
+        # locked: the packages must match packages.lock.json exactly (version and content hash)
+        run: dotnet build windows/src/DragShift -c Release -o out -p:RestoreLockedMode=true
+      - name: Engine self-test on Windows
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath out\DragShift.exe -ArgumentList '--selftest', "$pwd\selftest" -Wait -PassThru
+          Get-Content selftest\selftest.txt
+          exit $p.ExitCode
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: DragShift-Windows
+          path: |
+            out/DragShift.exe
+            selftest/*.png
+            selftest/*.jpg
+            selftest/printed-*.pdf
+            selftest/selftest.txt

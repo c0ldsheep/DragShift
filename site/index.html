@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>DragShift · No cyber café. No queue.</title>
+  <meta name="description" content="Photo too big for the form? PDF locked with a password? Drag the file, press Shift, pick the fix: under 50 KB, unlock, three scans into one PDF. Free forever for Mac and Windows. Your files never leave your computer.">
+  <link rel="canonical" href="https://c0ldsheep.github.io/DragShift/">
+  <meta property="og:title" content="DragShift · No cyber café. No queue.">
+  <meta property="og:description" content="Drag a file, press Shift, pick the fix. Free forever for Mac and Windows.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://c0ldsheep.github.io/DragShift/">
+  <meta property="og:image" content="https://c0ldsheep.github.io/DragShift/assets/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="An application form under a desk lamp, every box filled, with a round green SUBMITTED seal.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#fff5f0">
+  <!-- Only what the page uses, from this site; everything else is refused (no requests after load, no plugins,
+       no frames, no forms). data: images are the loader's petal masks. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <!-- links to GitHub don't tell it which page they came from -->
+  <meta name="referrer" content="no-referrer">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/site.css">
+  <!-- start fetching the 3D's files and the photo at once, not one after another once the page script asks -->
+  <link rel="modulepreload" href="assets/js/gl/scene.js">
+  <link rel="modulepreload" href="assets/js/gl/engine.js">
+  <link rel="modulepreload" href="assets/js/gl/paint.js">
+  <link rel="modulepreload" href="assets/js/gl/shaders.js">
+  <link rel="preload" as="image" href="assets/img/cat.jpg">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "DragShift",
+   "description": "Drag a file, press Shift, pick the fix: under 50 KB, unlock a PDF, scans into one PDF and more.",
+   "operatingSystem": "macOS 13 or newer, Windows 10 and 11", "applicationCategory": "UtilitiesApplication",
+   "isAccessibleForFree": true, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "INR"},
+   "url": "https://c0ldsheep.github.io/DragShift/", "downloadUrl": "https://github.com/c0ldsheep/DragShift/releases/latest",
+   "author": {"@type": "Person", "name": "c0ldsheep"}}
+  </script>
+  <script src="assets/js/boot.js"></script>
+  <script type="module" src="assets/js/main.js"></script>
+</head>
+<body>
+  <a class="framed-note" href="https://c0ldsheep.github.io/DragShift/" target="_top">Open DragShift</a>
+  <a class="skip" href="#get-it">Skip to download</a>
+  <div class="loader" data-loader role="progressbar" aria-label="Loading DragShift" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div class="loader-box">
+      <!-- the app's own ring: its seven petals light up one by one as the page loads. Every moving part is its own
+           layer animated by CSS (opacity and transform only), so it keeps moving even while the page is busy -->
+      <div class="loader-ring" data-loader-ring aria-hidden="true">
+        <svg class="lr-base" viewBox="-170 -170 340 340"><circle class="lr-disc" r="158"/><path class="lr-body" d="M-50.68 -129.43A139 139 0 0 1 50.68 -129.43L21.88 -69.64A73 73 0 0 0 -21.88 -69.64Z"/><path class="lr-body" d="M69.60 -120.32A139 139 0 0 1 132.79 -41.08L68.09 -26.31A73 73 0 0 0 40.80 -60.53Z"/><path class="lr-body" d="M137.46 -20.61A139 139 0 0 1 114.91 78.21L63.03 36.83A73 73 0 0 0 72.77 -5.84Z"/><path class="lr-body" d="M101.82 94.63A139 139 0 0 1 10.50 138.60L10.50 72.24A73 73 0 0 0 49.93 53.25Z"/><path class="lr-body" d="M-10.50 138.60A139 139 0 0 1 -101.82 94.63L-49.93 53.25A73 73 0 0 0 -10.50 72.24Z"/><path class="lr-body" d="M-114.91 78.21A139 139 0 0 1 -137.46 -20.61L-72.77 -5.84A73 73 0 0 0 -63.03 36.83Z"/><path class="lr-body" d="M-132.79 -41.08A139 139 0 0 1 -69.60 -120.32L-40.80 -60.53A73 73 0 0 0 -68.09 -26.31Z"/><circle class="lr-hub-ring" r="56"/></svg>
+        <span class="lr-petal"><svg class="lr-hot" viewBox="-170 -170 340 340"><defs><linearGradient id="lr-hot0" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8c38"/><stop offset="1" stop-color="#ff3d6e"/></linearGradient></defs><path d="M-50.68 -129.43A139 139 0 0 1 50.68 -129.43L21.88 -69.64A73 73 0 0 0 -21.88 -69.64Z" fill="url(#lr-hot0)" stroke="url(#lr-hot0)"/></svg><span class="lr-sheen"><i></i></span></span>
+        <span class="lr-petal"><svg class="lr-hot" viewBox="-170 -170 340 340"><defs><linearGradient id="lr-hot1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8c38"/><stop offset="1" stop-color="#ff3d6e"/></linearGradient></defs><path d="M69.60 -120.32A139 139 0 0 1 132.79 -41.08L68.09 -26.31A73 73 0 0 0 40.80 -60.53Z" fill="url(#lr-hot1)" stroke="url(#lr-hot1)"/></svg><span class="lr-sheen"><i></i></span></span>
+        <span class="lr-petal"><svg class="lr-hot" viewBox="-170 -170 340 340"><defs><linearGradient id="lr-hot2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8c38"/><stop offset="1" stop-color="#ff3d6e"/></linearGradient></defs><path d="M137.46 -20.61A139 139 0 0 1 114.91 78.21L63.03 36.83A73 73 0 0 0 72.77 -5.84Z" fill="url(#lr-hot2)" stroke="url(#lr-hot2)"/></svg><span class="lr-sheen"><i></i></span></span>
+        <span class="lr-petal"><svg class="lr-hot" viewBox="-170 -170 340 340"><defs><linearGradient id="lr-hot3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8c38"/><stop offset="1" stop-color="#ff3d6e"/></linearGradient></defs><path d="M101.82 94.63A139 139 0 0 1 10.50 138.60L10.50 72.24A73 73 0 0 0 49.93 53.25Z" fill="url(#lr-hot3)" stroke="url(#lr-hot3)"/></svg><span class="lr-sheen"><i></i></span></span>
+        <span class="lr-petal"><svg class="lr-hot" viewBox="-170 -170 340 340"><defs><linearGradient id="lr-hot4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8c38"/><stop offset="1" stop-color="#ff3d6e"/></linearGradient></defs><path d="M-10.50 138.60A139 139 0 0 1 -101.82 94.63L-49.93 53.25A73 73 0 0 0 -10.50 72.24Z" fill="url(#lr-hot4)" stroke="url(#lr-hot4)"/></svg><span class="lr-sheen"><i></i></span></span>
+        <span class="lr-petal"><svg class="lr-hot" viewBox="-170 -170 340 340"><defs><linearGradient id="lr-hot5" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8c38"/><stop offset="1" stop-color="#ff3d6e"/></linearGradient></defs><path d="M-114.91 78.21A139 139 0 0 1 -137.46 -20.61L-72.77 -5.84A73 73 0 0 0 -63.03 36.83Z" fill="url(#lr-hot5)" stroke="url(#lr-hot5)"/></svg><span class="lr-sheen"><i></i></span></span>
+        <span class="lr-petal"><svg class="lr-hot" viewBox="-170 -170 340 340"><defs><linearGradient id="lr-hot6" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8c38"/><stop offset="1" stop-color="#ff3d6e"/></linearGradient></defs><path d="M-132.79 -41.08A139 139 0 0 1 -69.60 -120.32L-40.80 -60.53A73 73 0 0 0 -68.09 -26.31Z" fill="url(#lr-hot6)" stroke="url(#lr-hot6)"/></svg><span class="lr-sheen"><i></i></span></span>
+        <svg class="lr-top" viewBox="-170 -170 340 340"><circle class="lr-hub" data-loader-hub r="53"/><text class="lr-pct" data-load-pct y="9">0%</text><path class="lr-tick" data-loader-tick d="M-16 2l11 11 22-24"/></svg>
+      </div>
+      <p class="loader-line" data-load-step>Setting the desk…</p>
+    </div>
+  </div>
+  <header class="nav">
+    <a class="brand" href="#top"><svg viewBox="-12 -12 24 24" width="22" height="22" aria-hidden="true"><circle r="8.5"/><circle r="3.6"/></svg>DragShift</a>
+    <nav class="nav-right" aria-label="Site">
+      <a class="nav-link" href="https://github.com/c0ldsheep/DragShift" target="_blank" rel="noopener">GitHub</a>
+      <a class="pill" href="#get-it" data-to-end>Download</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <!-- The film: a desk at 11:41 PM. Scrolling plays it (only while you scroll). -->
+    <section class="film" aria-label="What DragShift does">
+      <div class="stage">
+        <canvas class="scene" data-scene aria-hidden="true"></canvas>
+        <div class="words">
+          <p class="clock" data-clock aria-hidden="true"><i></i><b data-time>11:41 PM</b><span data-note>Last date: today, 11:59 PM</span></p>
+          <h1 data-h>The form closes at midnight.</h1>
+          <p class="sub" data-p>Your photo is 3.1 MB. The limit is 50 KB. The cyber café shut at 10.</p>
+          <div class="get" data-get aria-hidden="true">
+            <a class="btn primary" href="https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift-mac.zip" tabindex="-1">Download for Mac <span class="size" data-file="mac">4.1 MB</span></a>
+            <a class="btn" href="https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift.exe" tabindex="-1">Download for Windows <span class="size" data-file="win">380 KB</span></a>
+            <a class="btn quiet" href="https://github.com/c0ldsheep/DragShift" target="_blank" rel="noopener" tabindex="-1">Source on GitHub</a>
+          </div>
+        </div>
+        <svg class="crop" data-crop aria-hidden="true"><path class="crop-dim" data-crop-dim/><path class="crop-flash" data-crop-flash/><path class="crop-grid" data-crop-grid/><path class="crop-frame" data-crop-frame/><path class="crop-handles" data-crop-handles/></svg>
+        <div class="meter" data-meter aria-hidden="true"><i class="mi" data-mi></i><div><b data-size>3.1 MB</b><span data-limit>Limit 50 KB</span></div></div>
+        <div class="pw" data-pw aria-hidden="true">
+          <div class="pw-bar"><i></i><i></i><i></i><span>Unlock PDF</span></div>
+          <div class="pw-file">
+            <svg viewBox="0 0 24 30" width="26" height="32"><path d="M2 1h13l7 7v21H2z" fill="#fff" stroke="#c9c9cf"/><path d="M15 1v7h7" fill="none" stroke="#c9c9cf"/><rect x="0" y="16" width="17" height="8" rx="1.5" fill="#e0443a"/><text x="8.5" y="22.2" text-anchor="middle" font-size="5.6" font-weight="800" fill="#fff" font-family="-apple-system, sans-serif">PDF</text></svg>
+            <div><b>Statement.pdf</b><span>Type the current password</span></div>
+          </div>
+          <div class="pw-field"><span data-pw-dots></span><i></i></div>
+          <div class="pw-row"><span class="pw-cancel">Cancel</span><span class="pw-go" data-pw-go>Unlock</span></div>
+        </div>
+        <div class="ring-host" data-ring aria-hidden="true"></div>
+        <svg class="pointer" data-pointer viewBox="0 0 22 33" aria-hidden="true"><path d="M2 2v24l6.2-5.6 4.2 9.6 4.1-1.8-4.1-9.4H21z" fill="#000" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <div class="hint" data-hint aria-hidden="true"><span data-hint-text>Scroll</span><i></i></div>
+        <div class="keycap" data-key aria-hidden="true"><span data-key-glyph>⇧</span><b data-key-name>shift</b></div>
+      </div>
+      <div class="track" data-track></div>
+    </section>
+
+    <!-- The same story as words and pictures: for screen readers always, and on screen when there's no 3D. -->
+    <section class="story" aria-labelledby="story-title">
+      <h2 id="story-title" class="story-lead">The form closes at midnight.</h2>
+      <ol>
+        <li><figure data-still="1"><noscript><img src="assets/img/stills/1.jpg" alt="The cropped photo thrown back off the form, with a red error under the box: still too big, 1.2 MB." width="1200" height="750"></noscript></figure>
+          <h3>Rejected. Again.</h3><p>Your photo is 3.1 MB and the limit is 50 KB. You cropped it: still 1.2 MB, still too big. The cyber café shut at 10.</p></li>
+        <li><figure data-still="2"><noscript><img src="assets/img/stills/2.jpg" alt="The photo in its box with a green tick: uploaded, 48.6 KB." width="1200" height="750" loading="lazy"></noscript></figure>
+          <h3>Drag it. Press Shift.</h3><p>Pick Under 50 KB. It lands just under the limit: 48.6 KB.</p></li>
+        <li><figure data-still="3"><noscript><img src="assets/img/stills/3.jpg" alt="A brass padlock springing open on a bank statement." width="1200" height="750" loading="lazy"></noscript></figure>
+          <h3>Locked PDF? Unlock it.</h3><p>Banks add a password and forms reject it. Shift, Unlock, type it once, and you get a copy without the password.</p></li>
+        <li><figure data-still="4"><noscript><img src="assets/img/stills/4.jpg" alt="Three phone scans stapled into one PDF in the documents box." width="1200" height="750" loading="lazy"></noscript></figure>
+          <h3>Three scans. One PDF.</h3><p>Drag them together and pick PDF.</p></li>
+        <li><figure data-still="5"><noscript><img src="assets/img/stills/5.jpg" alt="The finished form with a round green seal: SUBMITTED, 11:53 PM." width="1200" height="750" loading="lazy"></noscript></figure>
+          <h3>No cyber café. No queue.</h3><p>Everything done in 2 clicks. No websites, no uploads. Submitted at 11:53 PM, 6 minutes to spare.</p></li>
+      </ol>
+    </section>
+
+    <section class="get-it" id="get-it" aria-labelledby="get-title">
+      <h2 id="get-title">Free forever for Mac and Windows.</h2>
+      <p>Drag a file, press Shift, pick the fix. Your files never leave your computer.</p>
+      <!-- on a phone or tablet (main.js shows it): DragShift is for computers, so send the page to one -->
+      <div class="on-phone" data-on-phone hidden>
+        <p>On your phone? DragShift runs on a Mac or a Windows PC.</p>
+        <button class="btn primary" type="button" data-share>Send this page to my computer</button>
+      </div>
+      <div class="get-row" data-get-row>
+        <a class="btn primary" href="https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift-mac.zip">Download for Mac <span class="size" data-file="mac">4.1 MB</span></a>
+        <a class="btn" href="https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift.exe">Download for Windows <span class="size" data-file="win">380 KB</span></a>
+      </div>
+      <ul class="trust">
+        <li>Open source</li>
+        <li>Works without internet</li>
+        <li>No account</li>
+      </ul>
+      <p class="small">macOS 13 Ventura or newer, Apple silicon and Intel. Windows 10 and 11. Unlock PDF and merging PDFs are on Mac only for now.</p>
+      <details class="first-open">
+        <summary>First time opening it?</summary>
+        <p><b>Mac:</b> open the zip, drag DragShift into Applications and open it. If macOS says it can't check the app, open System Settings → Privacy &amp; Security, scroll down and click <b>Open Anyway</b>.</p>
+        <p><b>Windows:</b> if Windows says it protected your PC, click <b>More info</b>, then <b>Run anyway</b>. Windows says this about new apps until enough people have opened them.</p>
+      </details>
+    </section>
+
+    <footer class="foot">
+      <p>DragShift is made by c0ldsheep and it's <a href="https://github.com/c0ldsheep/DragShift" target="_blank" rel="noopener">open source</a>.</p>
+      <p>This page has no cookies and no trackers, and it never uploads anything.</p>
+      <p><a href="https://github.com/c0ldsheep/DragShift/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy</a> · <a href="https://github.com/c0ldsheep/DragShift/blob/main/LICENSE" target="_blank" rel="noopener">MIT licence</a></p>
+    </footer>
+  </main>
+</body>
+</html>
