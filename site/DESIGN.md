@@ -50,7 +50,7 @@ scroll, and the results hold for a moment, so nobody rushes past them.
 - **After the film:** the download section, then the footer. The download section has:
   - each button with its file's real size, as Finder or Explorer shows it; `scripts/package-release.sh` rewrites them
   - a trust line: ✓ Open source · ✓ Works without internet · ✓ No account (the apps have no network code)
-  - the requirements, with Unlock and PDF merge marked Mac-only
+  - the requirements, with the note that on Windows Unlock and Merge save the pages as pictures
 - **Footer:** made by c0ldsheep, open source, no cookies, no trackers.
 - **The story as words and five stills:** visually hidden for screen readers, and shown with pictures when there's no
   3D or no script.

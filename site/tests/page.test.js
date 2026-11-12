@@ -55,10 +55,11 @@ test("every local file the page uses exists", () => {
   for (const f of files) assert.ok(existsSync(here(f)), `missing ${f}`);
 });
 
-test("the honest small print: requirements and what's Mac-only", () => {
+test("the honest small print: requirements and what differs on Windows", () => {
   assert.match(html, /macOS 13/);
   assert.match(html, /Windows 10 and 11/);
-  assert.match(html, /Unlock PDF[^<]*Mac only/);
+  assert.match(html, /On Windows, Unlock and Merge save the pages as pictures/);
+  assert.doesNotMatch(html, /Mac only/);
   assert.match(html, /no cookies and no trackers/);
 });
 
