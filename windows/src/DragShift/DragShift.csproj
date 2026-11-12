@@ -11,7 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>AppIcon.ico</ApplicationIcon>
 
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Product>DragShift</Product>
     <Company>c0ldsheep</Company>
     <Description>Change any file while you drag it.</Description>

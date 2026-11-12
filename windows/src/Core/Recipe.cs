@@ -39,7 +39,7 @@ namespace DragShift.Core
         public Slice Slice => new Slice(Id, Name, Glyph, "Running " + Name);
 
         /// <summary>Steps that turn many files into one (so the chain runs once for the whole group).</summary>
-        public static readonly ISet<string> ManyToOne = new HashSet<string> { "img.to.pdf", "img.stitch", "file.zip" };
+        public static readonly ISet<string> ManyToOne = new HashSet<string> { "img.to.pdf", "img.stitch", "file.zip", "pdf.merge", "mixed.merge" };
 
         public static readonly IList<Recipe> BuiltIns = new[]
         {

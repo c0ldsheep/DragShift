@@ -240,295 +240,29 @@ namespace DragShift
         }
     }
 
-    sealed class SettingsForm : Form
-    {
-        public event Action<bool> HotkeyChanged;
-        public event Action<string> ShelfChanged;
-        readonly Core.Settings S;
-        readonly Capabilities caps;
-
-        public SettingsForm(Core.Settings settings, Capabilities caps)
-        {
-            S = settings;
-            this.caps = caps;
-            Ui.Dialog(this, "DragShift Settings", 660, 580); // wide enough for the Printing tab's fields, no sideways scrolling
-            TopMost = false;
-            StartPosition = FormStartPosition.CenterScreen;
-            var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(14, 5) };
-            tabs.TabPages.Add(General());
-            tabs.TabPages.Add(Triggers());
-            tabs.TabPages.Add(Favorites());
-            tabs.TabPages.Add(Saving());
-            tabs.TabPages.Add(PrintingTab.Build(S));
-            tabs.TabPages.Add(About());
-            Controls.Add(tabs);
-        }
-
-        static FlowLayoutPanel Page(TabPage tab)
-        {
-            var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(14), WrapContents = false, AutoScroll = true };
-            tab.Controls.Add(flow);
-            return flow;
-        }
-
-        CheckBox Check(FlowLayoutPanel flow, string text, string help, bool value, Action<bool> set)
-        {
-            var c = new CheckBox { Text = text, Checked = value, AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
-            c.CheckedChanged += (s, e) => set(c.Checked);
-            flow.Controls.Add(c);
-            if (help != null) flow.Controls.Add(new Label { Text = help, Font = Ui.Small, ForeColor = Ui.Muted, AutoSize = true, MaximumSize = new Size(490, 0), Margin = new Padding(18, 0, 0, 4) });
-            return c;
-        }
-
-        TabPage General()
-        {
-            var tab = new TabPage("General");
-            var f = Page(tab);
-            Check(f, "Start DragShift with Windows", null, Integration.StartsWithWindows, v => Integration.StartsWithWindows = v);
-            Check(f, "Add DragShift to the right-click \"Send to\" menu", "Explorer → right-click files → Send to → DragShift opens the ring for them.",
-                  Integration.InSendTo, v => Integration.InSendTo = v);
-            Check(f, "Put text it reads on the clipboard", "Picture → Text and PDF → Text.", S.GetBool(Keys.CopyText, true), v => S.Set(Keys.CopyText, v));
-            Check(f, "Show the new file in Explorer", null, S.GetBool(Keys.Reveal, false), v => S.Set(Keys.Reveal, v));
-            Check(f, "Play a sound when a file is ready", null, S.GetBool(Keys.Sound, false), v => S.Set(Keys.Sound, v));
-            Check(f, "Make what I pick most glow when the ring opens", "After three picks in a row, that slice gets a soft pulsing edge.",
-                  S.GetBool(Keys.UsualGlow, true), v => S.Set(Keys.UsualGlow, v));
-            return tab;
-        }
-
-        TabPage Triggers()
-        {
-            var tab = new TabPage("Triggers");
-            var f = Page(tab);
-            Check(f, "Press Shift while dragging", "Or hold Shift first, then grab the file. Press Shift again for the next page.", S.Shift, v => S.Set(Keys.Shift, v));
-            var mouse = Check(f, "Click another mouse button while dragging",
-                              "For mice: hold the file with the left button, then click one of these. If an app you drag from already uses a button, untick it here.",
-                              S.Mouse, v => S.Set(Keys.Mouse, v));
-            var boxes = new List<CheckBox>();
-            foreach (var (button, label) in new[] { (MouseTrigger.Right, "Right button"), (MouseTrigger.Middle, "Wheel click (middle button)"),
-                                                    (MouseTrigger.Back, "Side button: back"), (MouseTrigger.Forward, "Side button: forward") })
-            {
-                var box = new CheckBox { Text = label, Checked = (S.TriggerButtons & button) != 0, AutoSize = true, Enabled = S.Mouse, Margin = new Padding(22, 1, 0, 0) };
-                box.CheckedChanged += (s, e) => S.TriggerButtons = box.Checked ? S.TriggerButtons | button : S.TriggerButtons & ~button;
-                boxes.Add(box);
-                f.Controls.Add(box);
-            }
-            mouse.CheckedChanged += (s, e) => { foreach (var box in boxes) box.Enabled = mouse.Checked; };
-            Check(f, "Tap one more finger on the touchpad", "Drag with one finger, touch a second one down. Works on Precision Touchpads (most laptops since 2016).",
-                  S.Finger, v => S.Set(Keys.Finger, v));
-            Check(f, "Ctrl+Alt+V opens the clipboard in the ring", "Copy files in Explorer, or take a screenshot with Win+Shift+S, then press it.",
-                  S.GetBool(Keys.Hotkey, true), v => { S.Set(Keys.Hotkey, v); HotkeyChanged?.Invoke(v); });
-            var row = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 14, 0, 0) };
-            row.Controls.Add(new Label { Text = "Favourites shelf (push a dragged file against the edge):", AutoSize = true, Margin = new Padding(0, 6, 6, 0) });
-            var side = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
-            side.Items.AddRange(new object[] { "Right edge", "Left edge", "Off" });
-            var current = S.Get(Keys.Shelf, "right");
-            side.SelectedIndex = current == "left" ? 1 : current == "off" ? 2 : 0;
-            side.SelectedIndexChanged += (s, e) =>
-            {
-                var v = side.SelectedIndex == 1 ? "left" : side.SelectedIndex == 2 ? "off" : "right";
-                S.Set(Keys.Shelf, v);
-                ShelfChanged?.Invoke(v);
-            };
-            row.Controls.Add(side);
-            f.Controls.Add(row);
-            f.Controls.Add(new Label
-            {
-                Text = "Once the ring is open: push the file toward a slice and let go. Or let go in the middle and the ring stays open: glide to a slice and click it. Double-tap Shift to repeat the last thing you did. Esc closes it.",
-                Font = Ui.Small, ForeColor = Ui.Muted, AutoSize = true, MaximumSize = new Size(500, 0), Margin = new Padding(0, 16, 0, 0),
-            });
-            return tab;
-        }
-
-        TabPage Favorites()
-        {
-            var tab = new TabPage("Favorites");
-            var f = Page(tab);
-            f.Controls.Add(Ui.Text("Ticked ones show first in the ring (★ Faves) and on the edge shelf. Only the ones that fit the dragged file appear.", Ui.Small, Ui.Muted, 500));
-            var all = new List<(string Id, string Title)>();
-            foreach (var s in Catalog.Everything(Capabilities.All)) all.Add((s.Id, s.Title));
-            foreach (var r in Recipe.BuiltIns) all.Add((r.Id, r.Name + " (recipe)"));
-            foreach (var kb in new[] { 20, 50, 100, 200 }) all.Add((SizeLimit.StepId(kb), "Under " + SizeLimit.Title(kb)));
-            var faves = S.Favorites;
-            var ordered = faves.Select(id => all.FirstOrDefault(a => a.Id == id)).Where(a => a.Id != null)
-                               .Concat(all.Where(a => !faves.Contains(a.Id))).GroupBy(a => a.Id).Select(g => g.First()).ToList();
-            var list = new CheckedListBox { Width = 400, Height = 330, CheckOnClick = true, Margin = new Padding(0, 8, 0, 0) };
-            foreach (var a in ordered) list.Items.Add(new Item(a.Id, a.Title), faves.Contains(a.Id));
-            void Save()
-            {
-                var ids = new List<string>();
-                for (int i = 0; i < list.Items.Count; i++) if (list.GetItemChecked(i)) ids.Add(((Item)list.Items[i]).Id);
-                S.Set(Keys.Favorites, ids);
-            }
-            list.ItemCheck += (s, e) => BeginInvoke((Action)Save);
-            var side = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, Margin = new Padding(8, 8, 0, 0) };
-            var up = Ui.Plain("Move up");
-            var down = Ui.Plain("Move down");
-            var reset = Ui.Plain("Reset");
-            void Move(int d)
-            {
-                int i = list.SelectedIndex, j = i + d;
-                if (i < 0 || j < 0 || j >= list.Items.Count) return;
-                var item = list.Items[i];
-                bool c = list.GetItemChecked(i);
-                list.Items.RemoveAt(i);
-                list.Items.Insert(j, item);
-                list.SetItemChecked(j, c);
-                list.SelectedIndex = j;
-                Save();
-            }
-            up.Click += (s, e) => Move(-1);
-            down.Click += (s, e) => Move(1);
-            reset.Click += (s, e) => { S.Set(Keys.Favorites, Catalog.DefaultFavorites); Close(); };
-            side.Controls.AddRange(new Control[] { up, down, reset });
-            var row = new FlowLayoutPanel { AutoSize = true };
-            row.Controls.Add(list);
-            row.Controls.Add(side);
-            f.Controls.Add(row);
-            f.Controls.Add(Ui.Text("Tip: right-click any slice while the ring is open to add or remove it.", Ui.Small, Ui.Muted, 500));
-            return tab;
-        }
-
-        sealed class Item
-        {
-            public readonly string Id, Title;
-            public Item(string id, string title) { Id = id; Title = title; }
-            public override string ToString() => Title;
-        }
-
-        TabPage Saving()
-        {
-            var tab = new TabPage("Saving");
-            var f = Page(tab);
-            f.Controls.Add(Ui.Text("Save new files", Ui.Bold));
-            var where = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260, Margin = new Padding(0, 4, 0, 0) };
-            where.Items.AddRange(new object[] { "Next to the original", "Downloads", "A folder I choose…" });
-            var mode = S.Get(Keys.OutputMode, "beside");
-            where.SelectedIndex = mode == "downloads" ? 1 : mode == "folder" ? 2 : 0;
-            var folderLabel = Ui.Text(S.Get(Keys.OutputFolder), Ui.Small, Ui.Muted, 480);
-            folderLabel.Visible = where.SelectedIndex == 2; // the remembered folder is shown only while it is the one in use
-            where.SelectedIndexChanged += (s, e) =>
-            {
-                if (where.SelectedIndex == 2)
-                {
-                    using (var d = new FolderBrowserDialog { Description = "New files go here" })
-                    {
-                        if (d.ShowDialog(this) == DialogResult.OK) { S.Set(Keys.OutputFolder, d.SelectedPath); folderLabel.Text = d.SelectedPath; }
-                        else { where.SelectedIndex = 0; return; }
-                    }
-                }
-                S.Set(Keys.OutputMode, where.SelectedIndex == 1 ? "downloads" : where.SelectedIndex == 2 ? "folder" : "beside");
-                folderLabel.Visible = where.SelectedIndex == 2;
-            };
-            f.Controls.Add(where);
-            f.Controls.Add(folderLabel);
-            f.Controls.Add(Ui.Text("Originals are never changed. If a name is taken, DragShift adds 2, 3… like Explorer does.", Ui.Small, Ui.Muted, 500));
-
-            f.Controls.Add(new Label { Text = "JPG quality: " + (int)(S.Quality * 100), AutoSize = true, Margin = new Padding(0, 12, 0, 0), Name = "q" });
-            var quality = new TrackBar { Minimum = 50, Maximum = 100, Value = (int)(S.Quality * 100), Width = 300, TickFrequency = 10 };
-            quality.ValueChanged += (s, e) => { S.Set(Keys.Quality, quality.Value / 100.0); f.Controls["q"].Text = "JPG quality: " + quality.Value; };
-            f.Controls.Add(quality);
-
-            f.Controls.Add(Ui.Text("Passport photo", Ui.Bold));
-            var spec = S.Photo;
-            var grid = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
-            var size = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240 };
-            foreach (var p in PhotoSpec.Presets) size.Items.Add(p.Name);
-            size.SelectedIndex = Math.Max(0, Array.FindIndex(PhotoSpec.Presets, p => p.Spec.WidthMM == spec.WidthMM && p.Spec.HeightMM == spec.HeightMM));
-            var limit = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
-            var limits = new[] { 20, 50, 100, 200, 240, 500, 0 };
-            foreach (var kb in limits) limit.Items.Add(kb == 0 ? "No limit" : SizeLimit.Title(kb));
-            limit.SelectedIndex = Math.Max(0, Array.IndexOf(limits, spec.MaxKB));
-            var bg = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
-            bg.Items.AddRange(new object[] { "White", "Light blue", "Keep the original" });
-            bg.SelectedIndex = (int)spec.Background;
-            void SavePhoto()
-            {
-                var p = PhotoSpec.Presets[Math.Max(0, size.SelectedIndex)].Spec.Copy();
-                p.MaxKB = limits[Math.Max(0, limit.SelectedIndex)];
-                p.Background = (PhotoBackground)Math.Max(0, bg.SelectedIndex);
-                S.Set(Keys.Photo, p.ToString());
-            }
-            size.SelectedIndexChanged += (s, e) => SavePhoto();
-            limit.SelectedIndexChanged += (s, e) => SavePhoto();
-            bg.SelectedIndexChanged += (s, e) => SavePhoto();
-            grid.Controls.Add(new Label { Text = "Size", AutoSize = true, Margin = new Padding(0, 6, 10, 0) });
-            grid.Controls.Add(size);
-            grid.Controls.Add(new Label { Text = "Keep it under", AutoSize = true, Margin = new Padding(0, 6, 10, 0) });
-            grid.Controls.Add(limit);
-            grid.Controls.Add(new Label { Text = "Background", AutoSize = true, Margin = new Padding(0, 6, 10, 0) });
-            grid.Controls.Add(bg);
-            f.Controls.Add(grid);
-            f.Controls.Add(Ui.Text("Finds the face, centres it the way passport rules ask and saves a JPG at 300 dpi, so it prints at exactly the right size. A plain wall behind the person is changed to the colour you pick; a busy background is kept.",
-                                   Ui.Small, Ui.Muted, 500));
-
-            f.Controls.Add(new Label { Text = "Watermark text", AutoSize = true, Margin = new Padding(0, 12, 0, 0) });
-            var mark = new TextBox { Width = 300, Text = S.Get(Keys.Watermark, "© " + Environment.UserName) };
-            mark.TextChanged += (s, e) => S.Set(Keys.Watermark, mark.Text);
-            f.Controls.Add(mark);
-            return tab;
-        }
-
-        TabPage About()
-        {
-            var tab = new TabPage("About");
-            var f = Page(tab);
-            f.Controls.Add(Ui.Text("DragShift " + AppMain.Version, Ui.Title));
-            f.Controls.Add(Ui.Text("Change any file while you drag it. Everything happens on this PC: no internet, no account, no tracking. Text reading and face finding use Windows' own on-device features.",
-                                   null, Ui.Muted, 500));
-            string PcLine() => "This PC: text reading " + (caps.Ocr ? "on" : "off (add a language with OCR in Windows Settings)")
-                                   + " · faces " + (caps.Faces ? "on" : "off") + " · HEIC saving " + (caps.HeicWrite ? "on" : "off (free \"HEIF Image Extensions\" in the Store)");
-            var pc = Ui.Text(PcLine(), Ui.Small, Ui.Muted, 500);
-            f.Controls.Add(pc);
-            var open = Ui.Plain("Open Log");
-            open.Margin = new Padding(0, 14, 0, 0);
-            open.Click += (s, e) => { try { Process.Start(Paths.LogFile); } catch (Exception) { Shell.Reveal(new[] { Paths.LogFile }); } };
-            f.Controls.Add(open);
-
-            // Buy me a coffee: only here, never a popup. Drag the cup and press Shift for sizes, or use the button.
-            var line = Ui.Text(Tip.Line(S.Fixed), null, null, 500);
-            line.Margin = new Padding(0, 22, 0, 0);
-            f.Controls.Add(line);
-            void RefreshAbout()
-            {
-                if (IsDisposed || !IsHandleCreated) return;
-                if (InvokeRequired)
-                {
-                    // The codec check finishes in the background; the window may close before it does.
-                    try { BeginInvoke((Action)RefreshAbout); } catch (InvalidOperationException) { }
-                    return;
-                }
-                pc.Text = PcLine();
-                line.Text = Tip.Line(S.Fixed);
-            }
-            HandleCreated += (s, e) => RefreshAbout();
-            S.Changed += RefreshAbout;
-            caps.HeicWriteChanged += RefreshAbout;
-            Disposed += (s, e) => { S.Changed -= RefreshAbout; caps.HeicWriteChanged -= RefreshAbout; };
-            var hint = Ui.Text(CoffeeCup.Closed, Ui.Small, Ui.Muted, 500);
-            f.Controls.Add(hint);
-            var cup = new CoffeeCup { Margin = new Padding(0, 6, 0, 0) };
-            cup.Hint += text => hint.Text = text;
-            cup.Picked += size => { using (var d = new TipForm(size)) d.ShowDialog(FindForm()); };
-            f.Controls.Add(cup);
-            var coffee = Ui.Plain("Buy me a coffee");
-            coffee.Click += (s, e) => { using (var d = new TipForm(-1)) d.ShowDialog(FindForm()); };
-            f.Controls.Add(coffee);
-            return tab;
-        }
-    }
-
     /// <summary>The About tab's coffee cup, tipped with the app's own move: drag it, press Shift, and three sizes fan
-    /// out under it; let go over one. A plain click opens the tip window too.</summary>
+    /// out under it; let go over one. A plain click opens the tip window too. The cup tips as it is pulled away from
+    /// its saucer and spills its coffee by the time it reaches the edge of the ring, the same cup as on the Mac.</summary>
     sealed class CoffeeCup : Control
     {
         public const string Closed = "Drag the cup and press Shift, or just click it";
+        // All at 100% scaling. The ring, the hole in its middle, and the circle you can grab the cup by (what is drawn is bigger).
         const float Outer = 96, Inner = 36, Cup = 44;
+        // The cup as drawn: its width from its left side to the outside of its handle.
+        const float Art = 54;
+        // The area. The drawing reaches 0.69 cup widths left of the cup's middle, 0.55 right, 0.42 up and 0.39 down when the cup is
+        // tipped (the wave and the drops), and the cup can be pulled 74 px in any direction below its saucer: this leaves them room
+        // (the self-test pulls it everywhere to check).
+        const float DesignWidth = 232, DesignHeight = 136, RestY = 32;
+        const int ReturnMs = 250;
         public event Action<int> Picked;
         public event Action<string> Hint;
 
         readonly Timer shiftWatch = new Timer { Interval = 40 };
+        readonly Timer settle = new Timer { Interval = 15 };
+        readonly Stopwatch clock = new Stopwatch();
         Point down;
-        PointF offset;
+        PointF offset, released;
         bool dragging, open, moved;
 
         public CoffeeCup()
@@ -539,11 +273,35 @@ namespace DragShift
             AccessibleName = "Buy me a coffee";
             // Shift pressed while the cup is held still moves nothing, so look at the key itself while dragging.
             shiftWatch.Tick += (s, e) => { if (dragging) See(); };
+            settle.Tick += (s, e) => Settle();
         }
 
-        float K => Width / (Outer * 2 + 8);
-        PointF Rest => new PointF(Width / 2f, (Cup / 2 + 6) * K);
+        float K => Width / DesignWidth;
+        PointF Rest => new PointF(Width / 2f, RestY * K);
         int Over => open ? Tip.Slice(offset.X / K, offset.Y / K, Inner) : -1;
+
+        /// <summary>Where the cup is `ms` after it was let go at `released`: quick at first, gentle at the end, back on its saucer
+        /// after a quarter of a second. (The coffee settles with it, because how far it is tipped follows how far it is pulled.)</summary>
+        internal static PointF Back(PointF released, float ms)
+        {
+            float done = Math.Min(1f, Math.Max(0f, ms / ReturnMs)), left = (1 - done) * (1 - done) * (1 - done);
+            return done >= 1f ? PointF.Empty : new PointF(released.X * left, released.Y * left);
+        }
+
+        void Settle()
+        {
+            long ms = clock.ElapsedMilliseconds;
+            offset = Back(released, ms);
+            if (ms >= ReturnMs) StopSettling();
+            Invalidate();
+        }
+
+        void StopSettling() { settle.Stop(); clock.Reset(); }
+
+        // For the self-test: where the saucer is, where the cup is, and whether it is on its way back.
+        internal PointF Saucer => Rest;
+        internal PointF Held => offset;
+        internal bool Settling => settle.Enabled;
 
         void See()
         {
@@ -557,6 +315,7 @@ namespace DragShift
             if (e.Button != MouseButtons.Left) return;
             var r = Rest;
             if (Math.Sqrt(Math.Pow(e.X - r.X, 2) + Math.Pow(e.Y - r.Y, 2)) > Cup / 2 * K + 4) return;
+            StopSettling(); // grabbed again while it was still on its way back
             down = e.Location; dragging = true; moved = false; open = false; offset = PointF.Empty;
             Capture = true;
             shiftWatch.Start();
@@ -579,10 +338,14 @@ namespace DragShift
             if (!dragging) return;
             int over = Over;
             bool click = !moved;
-            dragging = false; open = false; offset = PointF.Empty;
+            dragging = false; open = false;
             Capture = false;
             shiftWatch.Stop();
             Hint?.Invoke(Closed);
+            // Let go: the cup comes back to its saucer in a quarter of a second (at once when Windows is set to show no animations).
+            released = offset;
+            if (offset == PointF.Empty || !Native.Animations) offset = PointF.Empty;
+            else { clock.Restart(); settle.Start(); }
             Invalidate();
             if (over >= 0) Picked?.Invoke(over);
             else if (click) Picked?.Invoke(-1);
@@ -590,7 +353,7 @@ namespace DragShift
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) shiftWatch.Dispose();
+            if (disposing) { shiftWatch.Dispose(); settle.Dispose(); }
             base.Dispose(disposing);
         }
 
@@ -605,24 +368,36 @@ namespace DragShift
         }
 
         protected override void OnPaint(PaintEventArgs e) =>
-            Draw(e.Graphics, Width, Height, offset, open, Parent?.BackColor ?? SystemColors.Control, ForeColor);
+            Draw(e.Graphics, Width, offset, open, Parent?.BackColor ?? SystemColors.Control, ForeColor);
 
         /// <summary>The size the cup's area needs at 100% scaling.</summary>
-        public static Size Natural => new Size((int)(Outer * 2 + 8), (int)(Outer + Cup / 2 + 12));
+        public static Size Natural => new Size((int)DesignWidth, (int)DesignHeight);
 
-        /// <summary>Draws the cup (and the ring, when open) with the cup moved by `offset` from its saucer. Static so
-        /// the self-test can save pictures of it without opening a window.</summary>
-        public static void Draw(Graphics g, int width, int height, PointF offset, bool open, Color back, Color fore)
+        /// <summary>How far the cup has been pulled from its saucer: 0 at rest, 1 at the edge of the ring.</summary>
+        public static float Pulled(PointF offset, float scale) =>
+            Math.Min(1f, (float)Math.Sqrt(offset.X * offset.X + offset.Y * offset.Y) / ((Outer - Cup / 2) * scale));
+
+        /// <summary>Draws the cup (and the ring, when open) with the cup moved by `offset` from its saucer, in an area `width` wide
+        /// (<see cref="Natural"/> at 100%). Static so the self-test can save pictures of it without opening a window.</summary>
+        public static void Draw(Graphics g, int width, PointF offset, bool open, Color back, Color fore)
         {
             g.Clear(back);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-            float k = width / (Outer * 2 + 8);
-            var rest = new PointF(width / 2f, (Cup / 2 + 6) * k);
-            int over = open ? Tip.Slice(offset.X / k, offset.Y / k, Inner) : -1;
-            var centred = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            if (open)
-            {
+            float k = width / DesignWidth;
+            var rest = new PointF(width / 2f, RestY * k);
+            if (open) DrawRing(g, rest, k, Tip.Slice(offset.X / k, offset.Y / k, Inner), fore);
+            else
+                // A faint saucer under the cup, as on the Mac. No circle behind it.
+                using (var saucer = new SolidBrush(Color.FromArgb(26, fore)))
+                    g.FillEllipse(saucer, rest.X - 23 * k, rest.Y + (Cup / 2 - 2 - 5) * k, 46 * k, 10 * k);
+            CupPainter.Draw(g, new PointF(rest.X + offset.X, rest.Y + offset.Y), Art * k, Pulled(offset, k));
+        }
+
+        /// <summary>The three sizes, fanned out under the cup's saucer; the one under the cup is lit.</summary>
+        static void DrawRing(Graphics g, PointF rest, float k, int over, Color fore)
+        {
+            using (var centred = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
                 for (int i = 0; i < 3; i++)
                 {
                     // Small on the left: slice 0 spans 120°..180°, 1 spans 60°..120°, 2 spans 0°..60°.
@@ -651,45 +426,6 @@ namespace DragShift
                         g.DrawString("$" + Tip.Dollars[i], price, ink, new PointF(at.X, at.Y + 7 * k), centred);
                     }
                 }
-            }
-            // The cup on its own, no circle behind it: flat gold with a thin dark edge so it reads on light and dark windows.
-            var cup = new RectangleF(rest.X + offset.X - Cup / 2 * k, rest.Y + offset.Y - Cup / 2 * k, Cup * k, Cup * k);
-            using (var shape = CupShape(cup))
-            {
-                using (var gold = new SolidBrush(RingPainter.Gold)) g.FillPath(gold, shape); // flat, no shine
-                using (var edge = new Pen(RingPainter.OnHot, 1.6f * k) { LineJoin = LineJoin.Round }) g.DrawPath(edge, shape);
-            }
-        }
-
-        /// <summary>The coffee-cup symbol (U+2615 in Segoe UI Symbol, which every Windows 10 and 11 has) as an outline that
-        /// fills the box, so it can be filled and edged like any shape. Without that font a plain mug is drawn instead.</summary>
-        static GraphicsPath CupShape(RectangleF box)
-        {
-            var path = new GraphicsPath();
-            try
-            {
-                using (var family = new FontFamily("Segoe UI Symbol"))
-                    path.AddString("\u2615", family, (int)FontStyle.Regular, 100, PointF.Empty, StringFormat.GenericTypographic);
-            }
-            catch (ArgumentException) { path.Reset(); }
-            var bounds = path.GetBounds();
-            if (bounds.Width < 1 || bounds.Height < 1)
-            {
-                path.Reset(); // a plain mug: a body, a handle and a saucer
-                path.AddRectangle(new RectangleF(0, 0, 60, 70));
-                path.AddEllipse(new RectangleF(48, 12, 34, 38));
-                path.AddRectangle(new RectangleF(-8, 76, 84, 10));
-                bounds = path.GetBounds();
-            }
-            float scale = box.Height / bounds.Height;
-            using (var m = new Matrix())
-            {
-                m.Translate(box.X + box.Width / 2, box.Y + box.Height / 2);
-                m.Scale(scale, scale);
-                m.Translate(-(bounds.X + bounds.Width / 2), -(bounds.Y + bounds.Height / 2));
-                path.Transform(m);
-            }
-            return path;
         }
     }
 

@@ -66,6 +66,56 @@ namespace DragShift.Engine
             }
         }
 
+        /// <summary>Every line of text with the box of each word, in the picture's own pixels (null when this PC has no
+        /// text-reading language). Redact looks through these for what is private.</summary>
+        public static async Task<List<ReadLine>> ReadLines(Bitmap img)
+        {
+            var engine = OcrEngine.TryCreateFromUserProfileLanguages();
+            if (engine == null) return null;
+            int max = (int)OcrEngine.MaxImageDimension;
+            using (var fitted = Math.Max(img.Width, img.Height) > max ? Images.Fit(img, max) : new Bitmap(img))
+            using (var sb = Images.ToSoftwareBitmap(fitted))
+            {
+                // The reader sees the shrunk copy; its boxes are scaled back to the full picture.
+                double k = fitted.Width / (double)img.Width;
+                var result = await engine.RecognizeAsync(sb);
+                var lines = new List<ReadLine>();
+                foreach (var l in result.Lines)
+                {
+                    var line = new ReadLine(l.Text);
+                    foreach (var w in l.Words)
+                    {
+                        var r = w.BoundingRect;
+                        line.Words.Add(new ReadWord(w.Text, new Box(r.X / k, r.Y / k, r.Width / k, r.Height / k)));
+                    }
+                    lines.Add(line);
+                }
+                return lines;
+            }
+        }
+
+        /// <summary>Every face the finder sees (pixels, top-left origin); none when this PC can't look for faces.</summary>
+        public static async Task<List<Box>> Faces(Bitmap img)
+        {
+            var found = new List<Box>();
+            if (!FacesAvailable) return found;
+            double scale = Math.Min(1, 1600.0 / Math.Max(img.Width, img.Height));
+            using (var small = scale < 1 ? Images.Fit(img, 1600) : new Bitmap(img))
+            using (var bgra = Images.ToSoftwareBitmap(small))
+            using (var gray = SoftwareBitmap.Convert(bgra, BitmapPixelFormat.Gray8))
+            {
+                var detector = await FaceDetector.CreateAsync();
+                var faces = await detector.DetectFacesAsync(gray);
+                double k = small.Width / (double)img.Width;
+                foreach (var f in faces)
+                {
+                    var b = f.FaceBox;
+                    found.Add(new Box(b.X / k, b.Y / k, b.Width / k, b.Height / k));
+                }
+            }
+            return found;
+        }
+
         // MARK: Passport photo
 
         public sealed class PhotoResult

@@ -24,6 +24,11 @@ namespace DragShift.Engine
         public double PdfDpi = 200;
         public PhotoSpec Photo = new PhotoSpec();
         public string Watermark = "© " + Environment.UserName;
+        /// <summary>The password typed into Unlock. It is only held for that run: never saved, logged or put in a message.</summary>
+        public string Password;
+        /// <summary>What Redact covers (pixels of the upright picture) and how it hides it.</summary>
+        public IList<Box> RedactBoxes;
+        public RedactStyle RedactStyle = RedactStyle.Bar;
 
         public Options Copy() => (Options)MemberwiseClone();
     }
@@ -88,6 +93,25 @@ namespace DragShift.Engine
                     });
                 case "file.zip" when inputs.Count > 1:
                     return await Once(() => Task.Run(() => new List<string> { Zip(inputs, Dir(inputs[0])) }, ct));
+                case "pdf.merge":
+                case "mixed.merge":
+                    // PDFs give all their pages, pictures one page each, in Explorer's name order.
+                    return await Once(async () => new List<string> { await PdfRewrite.Merge(ordered, o, Dir, progress, ct, report) });
+                case "pdf.unlock":
+                    // Each PDF on its own, with the one password; every result is reported (the messages name their file).
+                    for (int i = 0; i < ordered.Count; i++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var locked = ordered[i];
+                        int index = i;
+                        var sub = new Progress<double>(f => progress?.Report((index + f) / ordered.Count));
+                        try { report.Outputs.Add(await PdfRewrite.Unlock(locked, o.Password, o, Dir, sub, ct, report)); }
+                        catch (OperationCanceledException) { throw; }
+                        catch (UserError e) { report.Failures.Add(e.Message); }
+                        catch (Exception e) { report.Failures.Add(Path.GetFileName(locked) + ": " + Message(e)); }
+                        progress?.Report((i + 1) / (double)ordered.Count);
+                    }
+                    return report;
             }
 
             for (int i = 0; i < ordered.Count; i++)
@@ -285,6 +309,16 @@ namespace DragShift.Engine
                     {
                         Watermark(img, o.Watermark);
                         return Out(await SaveEdited(img, path, "Watermarked", dir, o.Quality));
+                    }
+                }
+                case "img.redact":
+                {
+                    // The boxes come from the Redact window. The pixels under them are replaced in a copy; the original is never touched.
+                    if (o.RedactBoxes == null || o.RedactBoxes.Count == 0) throw new UserError("Nothing is covered. Open the picture in Redact and pick what to hide.");
+                    using (var img = await Images.Load(path))
+                    {
+                        RedactOps.Apply(img, o.RedactBoxes, o.RedactStyle);
+                        return Out(await SaveEdited(img, path, "Redacted", dir, o.Quality));
                     }
                 }
                 case "media.compress":

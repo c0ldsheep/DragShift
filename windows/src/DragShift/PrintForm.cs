@@ -448,12 +448,10 @@ namespace DragShift
         public static TabPage Build(Core.Settings s)
         {
             var tab = new TabPage("Printing");
-            var root = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(14), WrapContents = false, AutoScroll = true };
-            tab.Controls.Add(root);
-            root.Controls.Add(Ui.Text("Your print presets: the list in the Print window and the ring's Print page (drop a file on one and it prints). ★ one to put it in Favorites too.",
-                                      Ui.Small, Ui.Muted, 500));
+            var page = new Pane(tab).Column;
+            page.Controls.Add(Rows.Note("Your print presets: the list in the Print window and the ring's Print page (drop a file on one and it prints). ★ one to put it in Favorites too.", 8));
             var presets = s.PrintPresets;
-            var list = new ListBox { Width = 200, Height = 230, IntegralHeight = false, Margin = new Padding(0, 10, 14, 0) };
+            var list = new ListBox { Width = 150, Height = 250, IntegralHeight = false, Margin = new Padding(0), BorderStyle = BorderStyle.FixedSingle };
             var name = new TextBox { Width = 250 };
             var options = new PrintOptionsPanel();
             var star = new CheckBox { Text = "★ In the ring's Favorites", AutoSize = true, Margin = new Padding(74, 6, 0, 0) };
@@ -513,13 +511,23 @@ namespace DragShift
                 if (!loading && p != null) s.ShowPreset(p, shown.Checked);
             };
 
-            var top = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-            var left = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0) };
+            // The presets on the left, the one picked on the right, all in one card.
+            var top = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, BackColor = Look.Card, Margin = new Padding(0) };
+            top.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            top.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var left = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 16, 0), BackColor = Look.Card };
             left.Controls.Add(list);
-            var buttons = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
+            var buttons = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 6, 0, 0), BackColor = Look.Card };
             var add = Ui.Plain("+");
             var remove = Ui.Plain("−");
             var reset = Ui.Plain("Reset");
+            // Small buttons that sit on one line under the list.
+            foreach (var b in new[] { add, remove, reset })
+            {
+                b.AutoSize = false;
+                b.Size = new Size(b == reset ? 64 : 36, 28);
+                b.Margin = new Padding(0, 0, 6, 0);
+            }
             add.Click += (o, e) =>
             {
                 var n = (Selected() ?? PrintPreset.BuiltIns[0]).Copy();
@@ -544,29 +552,28 @@ namespace DragShift
             buttons.Controls.Add(remove);
             buttons.Controls.Add(reset);
             left.Controls.Add(buttons);
-            top.Controls.Add(left);
+            top.Controls.Add(left, 0, 0);
 
-            var editor = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 10, 0, 0) };
-            var nameRow = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 4) };
+            var editor = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0), BackColor = Look.Card };
+            var nameRow = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 4), BackColor = Look.Card };
             var nameLabel = Ui.Text("Name", null, Ui.Muted);
             nameLabel.Margin = new Padding(28, 6, 6, 0);
             nameRow.Controls.Add(nameLabel);
             nameRow.Controls.Add(name);
             editor.Controls.Add(nameRow);
+            options.BackColor = Look.Card;
             editor.Controls.Add(options);
             editor.Controls.Add(shown);
             editor.Controls.Add(star);
-            top.Controls.Add(editor);
-            root.Controls.Add(top);
+            top.Controls.Add(editor, 1, 0);
+            page.Controls.Add(new Card().Add(top));
 
-            var quick = new CheckBox
-            {
-                Text = "Print straight away when I pick Print (uses the first preset shown, no window)", AutoSize = true,
-                Checked = s.GetBool(Core.Settings.Keys.PrintQuick, false), Margin = new Padding(0, 14, 0, 0),
-            };
-            quick.CheckedChanged += (o, e) => s.Set(Core.Settings.Keys.PrintQuick, quick.Checked);
-            root.Controls.Add(quick);
-            root.Controls.Add(Ui.Text("Double-tap Shift on a file prints it again with whatever you used last.", Ui.Small, Ui.Muted, 500));
+            // Its own card, as on the Mac: the "print straight away" switch, with the double-tap Shift tip under it.
+            var quickRow = Rows.Toggle("Print straight away when I pick Print (uses the first preset shown, no window)",
+                                       "Double-tap Shift on a file prints it again with whatever you used last.",
+                                       s.GetBool(Core.Settings.Keys.PrintQuick, false), v => s.Set(Core.Settings.Keys.PrintQuick, v), out var quick);
+            page.Controls.Add(Rows.Section("When I pick Print"));
+            page.Controls.Add(new Card().Add(quickRow));
             Fill();
             return tab;
         }

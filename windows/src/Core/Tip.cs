@@ -23,9 +23,17 @@ namespace DragShift.Core
         /// is counting; the ask only comes once it has done some work.</summary>
         public static string Line(long made)
         {
+            var p = LineParts(made);
+            return p.Before + p.Count + p.After;
+        }
+
+        /// <summary>The same line in three pieces, so the window can show the count in bold: "DragShift has fixed ", "214 files",
+        /// " for you. If that was worth a coffee…".</summary>
+        public static (string Before, string Count, string After) LineParts(long made)
+        {
             if (made < 0) made = 0;
             string count = made.ToString("N0", CultureInfo.InvariantCulture) + (made == 1 ? " file" : " files");
-            return "DragShift has fixed " + count + (made == 0 ? " for you so far. When it earns a coffee…" : " for you. If that was worth a coffee…");
+            return ("DragShift has fixed ", count, made == 0 ? " for you so far. When it earns a coffee…" : " for you. If that was worth a coffee…");
         }
 
         /// <summary>The ring under the cup: three slices over the lower half, Small on the left. dx, dy: how far the

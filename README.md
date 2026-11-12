@@ -33,11 +33,13 @@
 | The site wants a PDF and you have a picture | **PDF** | ✓ | ✓ |
 | The site wants MP4 and you have MOV | **MP4** | ✓ | ✓ |
 | You need the words out of a picture or a scan | **Text** | ✓ | ✓ |
-| The bank PDF asks for a password every time | **Unlock** | ✓ | |
-| Many PDFs, one upload box | **Merge** | ✓ | |
-| A phone number or ID number shows in a screenshot | **Redact** | ✓ | |
+| The bank PDF asks for a password every time | **Unlock** | ✓ | ✓ |
+| Many PDFs, one upload box | **Merge** | ✓ | ✓ |
+| A phone number or ID number shows in a screenshot | **Redact** | ✓ | ✓ |
 
 On Windows, HEIC photos need Microsoft's free HEIF extension from the Store.
+
+On Windows, Merge and Unlock save the pages as pictures, so their text can't be selected.
 
 It also crops, resizes, rotates, removes backgrounds, watermarks, zips, trims video, makes GIFs and prints.
 The full list is in the [guide](docs/USING.md).

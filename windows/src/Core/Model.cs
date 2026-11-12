@@ -7,8 +7,9 @@ namespace DragShift.Core
 {
     public enum FileKind { Image, Pdf, Document, Video, Audio, Archive, Folder, Other }
 
-    /// <summary>Slices that need a choice open a small window instead of running straight away.</summary>
-    public enum Editor { None, FitKB, Resize, Print }
+    /// <summary>Slices that need a choice open a small window instead of running straight away.
+    /// Password asks for a PDF's password (Unlock); Redact shows the picture to pick what gets hidden.</summary>
+    public enum Editor { None, FitKB, Resize, Print, Password, Redact }
 
     /// <summary>One slice on the ring.</summary>
     public sealed class Slice

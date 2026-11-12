@@ -16,15 +16,24 @@ namespace DragShift.Engine
     /// <summary>PDF pages through Windows' own PDF renderer (the one Edge uses), and new PDFs through PdfWriter.</summary>
     static class Pdf
     {
-        public static async Task<WinPdf> Open(string path)
+        /// <summary>Windows says "wrong password" (ERROR_WRONG_PASSWORD) both for a locked PDF opened without a password and for
+        /// one opened with the wrong password.</summary>
+        public static bool IsLocked(Exception e) => e.HResult == unchecked((int)0x8007052B);
+
+        /// <summary>Opens a PDF. A locked one says so, and points at Unlock; with <paramref name="password"/> it is opened with it.
+        /// The password is only handed to Windows: it is never kept, logged or put in a message.</summary>
+        public static async Task<WinPdf> Open(string path, string password = null)
         {
             try
             {
-                return await WinPdf.LoadFromFileAsync(await StorageFile.GetFileFromPathAsync(path));
+                var file = await StorageFile.GetFileFromPathAsync(path);
+                return password == null ? await WinPdf.LoadFromFileAsync(file) : await WinPdf.LoadFromFileAsync(file, password);
             }
-            catch (Exception e) when (e.HResult == unchecked((int)0x8007052B))
+            catch (Exception e) when (IsLocked(e))
             {
-                throw new UserError(Path.GetFileName(path) + " is password-protected. Open it in Edge and save a copy without the password first.");
+                throw new UserError(password == null
+                    ? Path.GetFileName(path) + " is password-protected. Use Unlock first."
+                    : "Wrong password for " + Path.GetFileName(path) + ".");
             }
             catch (Exception)
             {
@@ -106,31 +115,30 @@ namespace DragShift.Engine
             catch (Exception) { return 0; }
         }
 
+        /// <summary>The page a picture becomes. A page is as big as the picture prints: a 300 dpi scan of an A4 sheet becomes an
+        /// A4 page. Phone photos and screenshots state no real print size, so they get one point per pixel, at most
+        /// A4's long side (like the Mac). Without that limit a phone photo became a page over a metre
+        /// wide, and "Under KB" could not shrink the PDF enough.</summary>
+        public static async Task<PdfWriter.Page> PageFor(string path, Bitmap img, double quality)
+        {
+            double dpi = await PrintDpi(path);
+            double w = img.Width, h = img.Height;
+            if (dpi > 0) { w = w * 72 / dpi; h = h * 72 / dpi; }
+            else
+            {
+                double s = Math.Min(1, 842 / Math.Max(w, h));
+                w *= s; h *= s;
+            }
+            return new PdfWriter.Page { Jpeg = Images.Jpeg(img, quality), PixelWidth = img.Width, PixelHeight = img.Height, Width = w, Height = h };
+        }
+
         public static async Task MakeFromImages(IList<string> images, string outPath, double quality, IProgress<double> progress, CancellationToken ct)
         {
             var pages = new List<PdfWriter.Page>();
             for (int i = 0; i < images.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
-                using (var img = await Images.Load(images[i]))
-                {
-                    // A page is as big as the picture prints: a 300 dpi scan of an A4 sheet becomes an A4 page. Phone
-                    // photos and screenshots state no real print size, so they get one point per pixel, at most
-                    // A4's long side (like the Mac). Without that limit a phone photo became a page over a metre
-                    // wide, and "Under KB" could not shrink the PDF enough.
-                    double dpi = await PrintDpi(images[i]);
-                    double w = img.Width, h = img.Height;
-                    if (dpi > 0) { w = w * 72 / dpi; h = h * 72 / dpi; }
-                    else
-                    {
-                        double s = Math.Min(1, 842 / Math.Max(w, h));
-                        w *= s; h *= s;
-                    }
-                    pages.Add(new PdfWriter.Page
-                    {
-                        Jpeg = Images.Jpeg(img, quality), PixelWidth = img.Width, PixelHeight = img.Height, Width = w, Height = h,
-                    });
-                }
+                using (var img = await Images.Load(images[i])) pages.Add(await PageFor(images[i], img, quality));
                 progress?.Report((i + 1) / (double)images.Count);
             }
             var bytes = PdfWriter.Make(pages);

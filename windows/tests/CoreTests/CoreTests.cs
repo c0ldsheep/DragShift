@@ -852,6 +852,22 @@ namespace DragShift.Tests
         }
 
         [Test]
+        static void TheLineComesInThreePiecesSoTheCountCanBeBold()
+        {
+            var none = Tip.LineParts(0);
+            Expect.Equal("DragShift has fixed ", none.Before, "the start of the line");
+            Expect.Equal("0 files", none.Count, "the count piece, even at 0");
+            Expect.Equal(" for you so far. When it earns a coffee…", none.After, "the end of the line before any work");
+            var many = Tip.LineParts(12345);
+            Expect.Equal("12,345 files", many.Count, "the count piece with its thousands comma");
+            Expect.Equal(" for you. If that was worth a coffee…", many.After, "the end of the line after some work");
+            Expect.Equal("1 file", Tip.LineParts(1).Count, "one file, not files");
+            Expect.Equal("0 files", Tip.LineParts(-3).Count, "a bad number counts as 0");
+            foreach (long n in new long[] { -3, 0, 1, 214, 12345 })
+                Expect.Equal(Tip.Line(n), Tip.LineParts(n).Before + Tip.LineParts(n).Count + Tip.LineParts(n).After, "the pieces put back together are the line, for " + n);
+        }
+
+        [Test]
         static void TheCupPicksTheSliceItIsOverAndTheTallyAddsUp()
         {
             Expect.Equal(-1, Tip.Slice(0, 10), "still on the saucer");

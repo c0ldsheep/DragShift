@@ -69,6 +69,7 @@ or money).
 ## App-specific notes
 
 - **Mac:** hardened runtime, with no entitlements, no URL scheme and no network code.
+- **Unlock (Windows):** the password typed into the Unlock window is used once, in memory, to open the PDF, and is never saved or logged. It is never put in a file name or a message either, and the box is cleared when the window closes (`PasswordForm.cs`, `PdfRewrite.cs`; the self-test checks that a wrong password is never repeated back).
 - **Zip bombs (fixed 2026-11-10):** a small zip that unpacks to fill the disk.
   - Mac: refused before unpacking when its listed size won't fit (keeping 1 GB free) or passes 20 GB, or it holds
     over 100,000 files.

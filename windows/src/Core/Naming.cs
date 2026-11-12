@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace DragShift.Core
 {
@@ -51,11 +52,33 @@ namespace DragShift.Core
             WriteAtomically(dest, write, true);
         }
 
+        /// <summary>The same as <see cref="Atomically"/>, for work that has to wait (drawing PDF pages one by one). If the work
+        /// fails or is cancelled, nothing is left behind: not the new file, and not the hidden temporary one either.</summary>
+        public static async Task AtomicallyAsync(string dest, Func<string, Task> write)
+        {
+            var dir = Path.GetDirectoryName(dest) ?? ".";
+            Directory.CreateDirectory(dir);
+            var tmp = TempFor(dir, dest);
+            try
+            {
+                await write(tmp).ConfigureAwait(false);
+                File.Move(tmp, dest);
+            }
+            finally
+            {
+                if (File.Exists(tmp)) File.Delete(tmp);
+            }
+        }
+
+        /// <summary>The hidden name a file is built under before it is moved into place.</summary>
+        static string TempFor(string dir, string dest) =>
+            Path.Combine(dir, "." + Path.GetFileName(dest) + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp");
+
         static void WriteAtomically(string dest, Action<string> write, bool replace)
         {
             var dir = Path.GetDirectoryName(dest) ?? ".";
             Directory.CreateDirectory(dir);
-            var tmp = Path.Combine(dir, "." + Path.GetFileName(dest) + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp");
+            var tmp = TempFor(dir, dest);
             try
             {
                 write(tmp);

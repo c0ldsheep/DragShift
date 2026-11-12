@@ -259,6 +259,36 @@ namespace DragShift
                 form.Chosen += step => Perform(new Slice(step, "Resize", Catalog.Glyph.Resize, "Resizing"), files, temporary);
                 form.Show();
             }
+            else if (slice.Editor == Editor.Password)
+            {
+                // Unlock: the window asks for the password and keeps asking until a PDF opens with it.
+                var form = new PasswordForm(files, password => Engine.PdfRewrite.CheckPassword(files, password));
+                KeepClipboardInput(form, files);
+                form.Chosen += password => RunJob(slice.Verb, files, temporary, async (o, p, ct) =>
+                {
+                    o.Password = password;
+                    try { return await Engine.Runner.Run(slice, files, o, p, ct); }
+                    finally { o.Password = null; } // used once; nothing keeps it
+                });
+                Ui.Raise(form); // the ring never takes the focus, so the window is brought forward: the password can be typed at once
+            }
+            else if (slice.Editor == Editor.Redact)
+            {
+                if (files.Count != 1)
+                {
+                    hud.ShowFlash("Redact works on one picture at a time", "Pick one picture, then Redact", Cursor.Position);
+                    return;
+                }
+                var form = new RedactForm(files[0], Settings);
+                KeepClipboardInput(form, files);
+                form.Chosen += (boxes, style) => RunJob(slice.Verb, files, temporary, (o, p, ct) =>
+                {
+                    o.RedactBoxes = boxes;
+                    o.RedactStyle = style;
+                    return Engine.Runner.Run(slice, files, o, p, ct);
+                });
+                Ui.Raise(form);
+            }
             else RunJob(slice.Verb, files, temporary, (o, p, ct) => Engine.Runner.Run(slice, files, o, p, ct));
         }
 
@@ -352,7 +382,7 @@ namespace DragShift
             { "Converting", "Converted" }, { "Compressing", "Compressed" }, { "Resizing", "Resized" }, { "Rotating", "Rotated" },
             { "Flipping", "Flipped" }, { "Reading", "Read" }, { "Making", "Made" }, { "Putting", "Put" }, { "Zipping", "Zipped" },
             { "Extracting", "Extracted" }, { "Saving", "Saved" }, { "Removing", "Removed" }, { "Adding", "Added" },
-            { "Fitting", "Fitted" }, { "Stitching", "Stitched" }, { "Running", "Done:" },
+            { "Fitting", "Fitted" }, { "Stitching", "Stitched" }, { "Running", "Done:" }, { "Merging", "Merged" }, { "Redacting", "Redacted" },
         };
 
         static string Done(string verb)

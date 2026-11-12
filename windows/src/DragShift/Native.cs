@@ -122,6 +122,13 @@ namespace DragShift
         public static extern bool ShowWindow(IntPtr hwnd, int command);
         public const int SW_HIDE = 0, SW_SHOWNOACTIVATE = 4;
 
+        /// <summary>One picture out of a program or icon file at a size of our choosing (the About tab asks the program for its
+        /// 256 px one, so the icon stays sharp). Give back what it returns with DestroyIcon.</summary>
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern uint PrivateExtractIcons(string file, int index, int width, int height, IntPtr[] icons, int[] ids, uint count, uint flags);
+        [DllImport("user32.dll")]
+        public static extern bool DestroyIcon(IntPtr icon);
+
         [DllImport("user32.dll")]
         public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
         [DllImport("user32.dll")]

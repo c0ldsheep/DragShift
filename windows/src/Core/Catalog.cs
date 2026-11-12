@@ -45,6 +45,9 @@ namespace DragShift.Core
             public const string StarFill = "", Slides = "", Refresh = "";
             public const string Print = "", More = "";
             public const string Rows = "\uE8FD"; // BulletedList: rows stacked, rather than ViewAll's grid.
+            public const string Merge = "\uEA3C";  // two lines joining into one arrow
+            public const string Unlock = "\uE785"; // an open padlock
+            public const string Hide = "\uED1A";   // an eye with a bar across it
         }
 
         static Slice ToImage(ImageFormat f)
@@ -76,12 +79,20 @@ namespace DragShift.Core
         public static readonly Slice Flip = new Slice("img.flip", "Flip", Glyph.Flip, "Flipping");
         public static readonly Slice StitchAll = new Slice("img.stitch", "Stitch", Glyph.Rows, "Stitching into one long picture");
         public static readonly Slice Watermark = new Slice("img.watermark", "Watermark", Glyph.Tag, "Adding the watermark");
+        /// <summary>Opens the picture with boxes over private details, to pick what gets hidden. One picture at a time.</summary>
+        public static readonly Slice Redact = new Slice("img.redact", "Redact", Glyph.Hide, "Redacting", Editor.Redact);
 
         // PDFs
         public static readonly Slice PdfJpg = new Slice("pdf.to.jpg", "JPG", Glyph.Photo, "Saving pages as JPG");
         public static readonly Slice PdfPng = new Slice("pdf.to.png", "PNG", Glyph.Picture, "Saving pages as PNG");
         public static readonly Slice PdfText = new Slice("pdf.to.txt", "Text", Glyph.Text, "Reading text");
         public static readonly Slice PdfCompress = new Slice("pdf.compress", "Compress", Glyph.Shrink, "Compressing");
+        /// <summary>Several PDFs (and pictures) into one. Only when more than one file is dragged.</summary>
+        public static readonly Slice PdfMerge = new Slice("pdf.merge", "Merge", Glyph.Merge, "Merging");
+        /// <summary>Asks for the password, then saves a copy that opens without one.</summary>
+        public static readonly Slice PdfUnlock = new Slice("pdf.unlock", "Unlock", Glyph.Unlock, "Removing the password", Editor.Password);
+        /// <summary>Pictures and PDFs dragged together become one PDF (on the Files page).</summary>
+        public static readonly Slice OnePdf = new Slice("mixed.merge", "One PDF", Glyph.Pdf, "Merging into one PDF");
 
         // Video and audio
         public static readonly Slice MediaCompress = new Slice("media.compress", "Compress", Glyph.Shrink, "Compressing");
@@ -122,7 +133,7 @@ namespace DragShift.Core
             new[] { "img.compress", "pdf.compress", "media.compress", "folder.compress" },
             new[] { "img.to.jpg", "pdf.to.jpg", "folder.jpg" },
             new[] { "img.to.png", "pdf.to.png" },
-            new[] { "img.to.pdf", "folder.pdf" },
+            new[] { "img.to.pdf", "folder.pdf", "mixed.merge" },
             new[] { "img.to.text", "pdf.to.txt" },
         };
 
@@ -228,6 +239,7 @@ namespace DragShift.Core
                     if (caps.Faces) edit.Add(Passport);
                     edit.AddRange(new[] { Compress, Resize, Rotate, Flip, Watermark });
                     if (many) edit.Insert(1, StitchAll); // several pictures into one long one
+                    else edit.Add(Redact);               // one picture at a time; last, so no other slice moves
                     Page("edit", "Edit", edit);
                     break;
                 }
@@ -238,6 +250,11 @@ namespace DragShift.Core
                     convert.Add(FitKB);
                     convert.Add(PdfCompress);
                     Page("convert", "PDF", convert);
+                    // Merge only means something for several files; Unlock works on each PDF you drag.
+                    var edit = new List<Slice>();
+                    if (many) edit.Add(PdfMerge);
+                    edit.Add(PdfUnlock);
+                    Page("edit", "Edit", edit);
                     break;
                 }
                 case FileKind.Video:
@@ -274,8 +291,23 @@ namespace DragShift.Core
             // Pictures and PDFs get Print on the Files page, after Share.
             var files = FilesPage.Slices.ToList();
             if (paths.Count > 0 && paths.All(CanPrint)) files.Insert(2, Print);
+            if (PicturesAndPdfs(paths)) files.Add(OnePdf); // last, so nothing else on the page moves
             Page("share", "Files", files.Where(s => !shown.Contains(s.Id)));
             return pages;
+        }
+
+        /// <summary>True for a drop of pictures and PDFs together (at least one of each): they can become one PDF.</summary>
+        public static bool PicturesAndPdfs(IList<string> paths)
+        {
+            bool picture = false, pdf = false;
+            foreach (var p in paths)
+            {
+                var k = Inspector.Kind(p);
+                if (k == FileKind.Image) picture = true;
+                else if (k == FileKind.Pdf) pdf = true;
+                else return false;
+            }
+            return picture && pdf;
         }
 
         /// <summary>Every slice that can ever appear, for Settings.</summary>
@@ -291,6 +323,10 @@ namespace DragShift.Core
                         foreach (var slice in p.Slices)
                             if (seen.Add(slice.Id)) all.Add(slice);
             }
+            // A picture and a PDF together: "One PDF".
+            foreach (var p in BasePages(new[] { "a.jpg", "a.pdf" }, caps))
+                foreach (var slice in p.Slices)
+                    if (seen.Add(slice.Id)) all.Add(slice);
             return all;
         }
     }

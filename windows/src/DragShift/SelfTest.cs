@@ -27,6 +27,14 @@ namespace DragShift
 
         public static int Run(string[] args)
         {
+            // Draw text the way the app does (Program.Main sets the same two things before its first window), so the pictures
+            // show what a person sees. It has to happen before the first window of the process is made.
+            try
+            {
+                WinForms.Application.EnableVisualStyles();
+                WinForms.Application.SetCompatibleTextRenderingDefault(false);
+            }
+            catch (InvalidOperationException) { } // a window already exists: the text keeps the way it was drawn
             var dir = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "dragshift-selftest");
             Directory.CreateDirectory(dir);
             // Recipes and native converters must keep their temporary work with these made-up test files.
@@ -529,35 +537,15 @@ namespace DragShift
                 return "800 × 1600";
             });
 
-            await Check("About tab: the coffee cup and its ring", async () =>
-            {
-                await Task.Yield();
-                Expect(Tip.Line(0).Contains("0 files") && Tip.Line(214).Contains("214 files"), "the count is always in the line");
-                var size = CoffeeCup.Natural;
-                var looks = new[] { ("cup-closed", PointF.Empty, false), ("cup-ring-small", new PointF(-55, 25), true),
-                                    ("cup-ring-medium", new PointF(0, 62), true), ("cup-ring-large", new PointF(55, 25), true) };
-                foreach (var look in looks)
-                    using (var bmp = new Bitmap(size.Width * 2, size.Height * 2, PixelFormat.Format32bppPArgb))
-                    {
-                        using (var g = Graphics.FromImage(bmp))
-                            CoffeeCup.Draw(g, bmp.Width, bmp.Height, new PointF(look.Item2.X * 2, look.Item2.Y * 2), look.Item3, SystemColors.Control, SystemColors.ControlText);
-                        bmp.Save(Path.Combine(dir, look.Item1 + ".png"), System.Drawing.Imaging.ImageFormat.Png);
-                        // The cup must be gold where it sits, in every picture: the middle of its body, which is left of and below the cup's centre.
-                        float cx = bmp.Width / 2f + look.Item2.X * 2, cy = (22 + 6) * 2 + look.Item2.Y * 2;
-                        var c = bmp.GetPixel((int)(cx - 9), (int)(cy + 18));
-                        Expect(c.R > 230 && c.G > 190 && c.B < 60, look.Item1 + ": a gold cup, got " + c);
-                        if (!look.Item3)
-                        {
-                            // The cup is on its own: this spot was inside the old gold circle and is plain window colour now.
-                            var behind = bmp.GetPixel((int)(cx - 38), (int)(cy - 18));
-                            Expect(behind.R == SystemColors.Control.R && behind.G == SystemColors.Control.G && behind.B == SystemColors.Control.B,
-                                   look.Item1 + ": no circle behind the cup, got " + behind);
-                        }
-                    }
-                return looks.Length + " pictures";
-            });
+            await Check("About tab: the coffee cup tips and spills as it is pulled, and its ring", () => CheckCup(dir));
 
             await Check("About information follows codec checks and completed files", () => CheckAboutRefresh(dir));
+
+            await Check("Settings window: the page names are one keyboard stop and a tab list a screen reader can read", () => CheckSettingsTabs(dir));
+
+            await Check("Settings window: every page shows at once, without a storm of layouts", () => CheckSettingsSpeed(dir));
+
+            await Check("Settings window: every setting is saved under its own name, and put back", () => CheckSettingsWiring(dir));
 
             await Check("Saving tab: the remembered folder is shown only while it is in use", () => CheckSavingFolderLabel(dir));
 
@@ -745,8 +733,554 @@ namespace DragShift
                 return new FileInfo(huge).Length + " byte PDF; no oversized raster requested";
             });
 
+            // Merge, Unlock and Redact. The locked PDF is the one in windows\tests\fixtures (found next to this copy or the folder it runs in).
+            var lockedPdf = FindFixture("locked-1234.pdf");
+            await Check("Merge: two PDFs and a picture make one PDF; each page keeps its size and place; nothing that was there changes", () => CheckMerge(dir, lockedPdf));
+            await Check("Merge: cancelling half-way leaves nothing behind, not even a hidden file", () => CheckMergeCancel(dir));
+            await Check("Unlock: the right password, a wrong one, a PDF with no password, and several PDFs at once", () => CheckUnlock(dir, lockedPdf));
+            await Check("Redact: the email and the phone number are found, and gone from the saved copy (Black bar, Pixelate, Blur)", () => CheckRedact(dir));
+            await Check("Window checker: it stays quiet for a fine window and notices a cut-off label, a cut-off button, a control sticking out and an overlap", () => CheckWindowChecker());
+            await Check("Redact window: boxes, click to turn one off, drag to add one, style remembered, no text reader, picture it can't open", () => CheckRedactWindow(dir));
+            await Check("Unlock window: a wrong password keeps it open and says so, the right one closes it", () => CheckPasswordWindow(dir, lockedPdf));
+
             Line(failed == 0 ? "ALL PASSED" : failed + " FAILED");
             return failed == 0 ? 0 : 1;
+        }
+
+        // MARK: Merge, Unlock and Redact
+
+        /// <summary>Hands every progress report on the spot, so a test can cancel at an exact point.</summary>
+        sealed class Instant : IProgress<double>
+        {
+            readonly Action<double> act;
+            public Instant(Action<double> act) { this.act = act; }
+            public void Report(double value) => act(value);
+        }
+
+        static string Hash(string path)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var fs = File.OpenRead(path)) return BitConverter.ToString(sha.ComputeHash(fs));
+        }
+
+        /// <summary>A test file that lives in the repository (windows\tests\fixtures), looked for from this copy and from the folder it
+        /// was started in, so it works for the build on the Windows check and on a PC alike. Null when it isn't there.</summary>
+        static string FindFixture(string name)
+        {
+            var env = Environment.GetEnvironmentVariable("DRAGSHIFT_FIXTURES");
+            if (!string.IsNullOrEmpty(env) && File.Exists(Path.Combine(env, name))) return Path.Combine(env, name);
+            foreach (var start in new[] { Environment.CurrentDirectory, AppDomain.CurrentDomain.BaseDirectory })
+                for (var d = new DirectoryInfo(start); d != null; d = d.Parent)
+                    foreach (var relative in new[] { @"windows\tests\fixtures", @"tests\fixtures" })
+                    {
+                        var path = Path.Combine(d.FullName, relative, name);
+                        if (File.Exists(path)) return path;
+                    }
+            return null;
+        }
+
+        static string Folder(string dir, string name)
+        {
+            var folder = Path.Combine(dir, name);
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        /// <summary>A page of one colour, <paramref name="width"/> × <paramref name="height"/> points.</summary>
+        static PdfWriter.Page SolidPage(Color colour, double width, double height)
+        {
+            using (var b = Images.Canvas(40, (int)Math.Round(40 * height / width), colour))
+                return new PdfWriter.Page { Jpeg = Images.Jpeg(b, 0.9), PixelWidth = b.Width, PixelHeight = b.Height, Width = width, Height = height };
+        }
+
+        static string MakePdf(string path, params PdfWriter.Page[] pages)
+        {
+            File.WriteAllBytes(path, PdfWriter.Make(pages));
+            return path;
+        }
+
+        /// <summary>Every page of a PDF as Windows' own reader sees it: its size in points and the colour in its middle.</summary>
+        static async Task<List<(double Width, double Height, Color Middle)>> PagesOf(string path)
+        {
+            var doc = await Pdf.Open(path);
+            var pages = new List<(double, double, Color)>();
+            for (uint i = 0; i < doc.PageCount; i++)
+            {
+                double w = 0, h = 0;
+                using (var img = await Pdf.Render(doc, i, 24, (pw, ph) => { w = pw; h = ph; }))
+                    pages.Add((w, h, img.GetPixel(img.Width / 2, img.Height / 2)));
+            }
+            return pages;
+        }
+
+        static bool Near(Color c, Color want, int slack = 30) =>
+            Math.Abs(c.R - want.R) <= slack && Math.Abs(c.G - want.G) <= slack && Math.Abs(c.B - want.B) <= slack;
+
+        static async Task<string> CheckMerge(string dir, string locked)
+        {
+            var folder = Folder(dir, "merge-check");
+            Color red = Color.FromArgb(220, 40, 40), blue = Color.FromArgb(40, 60, 220), green = Color.FromArgb(40, 180, 60), gold = Color.FromArgb(240, 200, 30);
+            var a = MakePdf(Path.Combine(folder, "Merge A.pdf"), SolidPage(red, 595, 842), SolidPage(blue, 842, 595));
+            var b = MakePdf(Path.Combine(folder, "Merge B.pdf"), SolidPage(green, 612, 792));
+            var c = Path.Combine(folder, "Merge C.png");
+            using (var pic = Images.Canvas(600, 400, gold)) pic.Save(c, System.Drawing.Imaging.ImageFormat.Png);
+            var originals = new[] { a, b, c };
+            var hashes = originals.Select(Hash).ToList();
+            var o = new Options();
+
+            // Dragged in any order, joined in Explorer's name order: 2 pages + 1 page + 1 picture = 4 pages.
+            var r = await Runner.Run(Catalog.PdfMerge, new[] { c, b, a }, o, null, CancellationToken.None);
+            Expect(r.Failures.Count == 0, string.Join("; ", r.Failures));
+            var merged = r.Outputs.Single();
+            Expect(Path.GetFileName(merged) == "Merge A Merged.pdf" && Path.GetDirectoryName(merged) == folder, "named after the first file and saved beside it, got " + merged);
+            Expect(r.Notes.Contains(PdfRewrite.PicturesNote), "the note that text can't be selected");
+            var pages = await PagesOf(merged);
+            Expect(pages.Count == 4, "4 pages, got " + pages.Count);
+            double[] widths = { 595, 842, 612, 600 }, heights = { 842, 595, 792, 400 };
+            Color[] colours = { red, blue, green, gold };
+            for (int i = 0; i < 4; i++)
+            {
+                Expect(Math.Abs(pages[i].Width - widths[i]) <= 1 && Math.Abs(pages[i].Height - heights[i]) <= 1,
+                       "page " + (i + 1) + " is " + widths[i] + " × " + heights[i] + " pt like its original, got " + pages[i].Width.ToString("0.#") + " × " + pages[i].Height.ToString("0.#"));
+                Expect(Near(pages[i].Middle, colours[i]), "page " + (i + 1) + " is the right page, in the right place (its colour is " + pages[i].Middle + ")");
+            }
+            Expect(originals.Select(Hash).SequenceEqual(hashes), "the three originals are byte for byte what they were");
+
+            // A second merge gets its own name; the first result is left alone.
+            var mergedHash = Hash(merged);
+            var again = await Runner.Run(Catalog.PdfMerge, new[] { a, b, c }, o, null, CancellationToken.None);
+            Expect(again.Failures.Count == 0 && again.Outputs.Single() != merged && Hash(merged) == mergedHash, "a second merge doesn't take the first one's place, got " + string.Join(", ", again.Outputs));
+
+            // A picture and a PDF together (the Files page): one PDF too.
+            var one = await Runner.Run(Catalog.OnePdf, new[] { c, b }, o, null, CancellationToken.None);
+            Expect(one.Failures.Count == 0, string.Join("; ", one.Failures));
+            var onePages = await PagesOf(one.Outputs.Single());
+            Expect(Path.GetFileName(one.Outputs.Single()).StartsWith("Merge B Merged", StringComparison.Ordinal) && onePages.Count == 2
+                   && Near(onePages[0].Middle, green) && Near(onePages[1].Middle, gold), "One PDF: the PDF page, then the picture, named after the first file");
+
+            // A password-protected PDF stops the whole job, says what to do, and makes nothing.
+            string lockedNote = "locked PDF not checked here (the test file isn't next to this copy)";
+            if (locked != null)
+            {
+                var l = Path.Combine(folder, "locked-1234.pdf");
+                File.Copy(locked, l);
+                int files = Directory.GetFiles(folder).Length;
+                var stopped = await Runner.Run(Catalog.PdfMerge, new[] { a, l }, o, null, CancellationToken.None);
+                Expect(stopped.Outputs.Count == 0 && stopped.Failures.Count == 1 && stopped.Failures[0] == "locked-1234.pdf is password-protected. Use Unlock first.",
+                       "the job stops with the Unlock hint, got " + string.Join("; ", stopped.Failures));
+                Expect(Directory.GetFiles(folder).Length == files, "nothing made");
+                lockedNote = "a locked PDF stops it with the Unlock hint";
+            }
+            return "4 pages (595×842, 842×595, 612×792 and 600×400 pt) in the right order; originals unchanged; a second merge gets its own name; " + lockedNote;
+        }
+
+        static async Task<string> CheckMergeCancel(string dir)
+        {
+            var folder = Folder(dir, "merge-cancel-check");
+            var long24 = MakePdf(Path.Combine(folder, "Long A.pdf"), Enumerable.Range(0, 24).Select(i => SolidPage(Color.FromArgb(40 + i * 8, 90, 200 - i * 6), 595, 842)).ToArray());
+            var one = MakePdf(Path.Combine(folder, "Long B.pdf"), SolidPage(Color.Gray, 595, 842));
+            var before = Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(x => x).ToList();
+            double reached = 0;
+            bool stopped = false;
+            using (var cts = new CancellationTokenSource())
+            {
+                var progress = new Instant(f => { reached = f; if (f >= 0.5) cts.Cancel(); });
+                try { await Runner.Run(Catalog.PdfMerge, new[] { long24, one }, new Options(), progress, cts.Token); }
+                catch (OperationCanceledException) { stopped = true; }
+            }
+            Expect(stopped, "cancelling stops the merge");
+            Expect(reached >= 0.5 && reached < 1, "it was cancelled half-way, at " + reached.ToString("0.00"));
+            var after = Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(x => x).ToList();
+            Expect(after.SequenceEqual(before), "no new file in the folder, not even a hidden one; it now holds: " + string.Join(", ", after));
+            return "cancelled at " + (int)Math.Round(reached * 100) + "%; the folder is exactly as it was";
+        }
+
+        static async Task<string> CheckUnlock(string dir, string fixture)
+        {
+            if (fixture == null) return "SKIP the locked test PDF (windows\\tests\\fixtures\\locked-1234.pdf) isn't next to this copy";
+            var folder = Folder(dir, "unlock-check");
+            var locked = Path.Combine(folder, "locked-1234.pdf");
+            File.Copy(fixture, locked);
+            var plain = MakePdf(Path.Combine(folder, "Plain.pdf"), SolidPage(Color.Gray, 595, 842));
+            var lockedHash = Hash(locked);
+            var ct = CancellationToken.None;
+
+            // The right password: a copy that opens with no password, the same two A4 pages.
+            var r = await Runner.Run(Catalog.PdfUnlock, new[] { locked }, new Options { Password = "1234" }, null, ct);
+            Expect(r.Failures.Count == 0, string.Join("; ", r.Failures));
+            var unlocked = r.Outputs.Single();
+            Expect(Path.GetFileName(unlocked) == "locked-1234 Unlocked.pdf" && Path.GetDirectoryName(unlocked) == folder, "named <name> Unlocked.pdf, beside the original, got " + unlocked);
+            Expect(r.Notes.Contains(PdfRewrite.PicturesNote), "the note that text can't be selected");
+            var pages = await PagesOf(unlocked); // PagesOf opens it with no password
+            Expect(pages.Count == 2 && pages.All(p => Math.Abs(p.Width - 595) <= 1 && Math.Abs(p.Height - 842) <= 1), "two A4 pages, got " + string.Join(", ", pages.Select(p => p.Width.ToString("0") + "×" + p.Height.ToString("0"))));
+            Expect(Encoding.GetEncoding("iso-8859-1").GetString(File.ReadAllBytes(unlocked)).IndexOf("/Encrypt", StringComparison.Ordinal) < 0, "no encryption is left in the copy");
+            Expect(Hash(locked) == lockedHash, "the locked original is byte for byte what it was");
+
+            // A wrong password: the plain message (it never repeats the password), and nothing is made.
+            int files = Directory.GetFiles(folder).Length;
+            const string typed = "zq-secret-7";
+            var wrong = await Runner.Run(Catalog.PdfUnlock, new[] { locked }, new Options { Password = typed }, null, ct);
+            Expect(wrong.Outputs.Count == 0 && wrong.Failures.Count == 1 && wrong.Failures[0] == "Wrong password for locked-1234.pdf.", "the Wrong password message, got " + string.Join("; ", wrong.Failures));
+            Expect(!string.Join(" ", wrong.Failures.Concat(wrong.Notes)).Contains(typed), "the message never repeats the password");
+            Expect(Directory.GetFiles(folder).Length == files, "no file is made");
+
+            // A PDF with no password: it says so, and nothing is made.
+            var none = await Runner.Run(Catalog.PdfUnlock, new[] { plain }, new Options { Password = "1234" }, null, ct);
+            Expect(none.Outputs.Count == 0 && none.Failures.Count == 1 && none.Failures[0] == "Plain.pdf has no password.", "the has-no-password message, got " + string.Join("; ", none.Failures));
+            Expect(Directory.GetFiles(folder).Length == files, "no file is made");
+
+            // Several PDFs, one password tried on each, each result reported.
+            var both = await Runner.Run(Catalog.PdfUnlock, new[] { plain, locked }, new Options { Password = "1234" }, null, ct);
+            Expect(both.Outputs.Count == 1 && both.Failures.Count == 1 && both.Failures[0] == "Plain.pdf has no password.", "one unlocked, one reported, got " + both.Outputs.Count + " and " + string.Join("; ", both.Failures));
+            Expect(Directory.GetFiles(folder).Length == files + 1, "one new file");
+
+            // What the password window asks before it closes.
+            var asked = await PdfRewrite.CheckPassword(new[] { locked }, typed);
+            Expect(asked == "Wrong password for locked-1234.pdf.", "the window is told what to say, got " + asked);
+            Expect(await PdfRewrite.CheckPassword(new[] { locked }, "1234") == null, "the right password goes ahead");
+            return "1234 gives a 2-page A4 PDF with no password; a wrong password and a PDF with no password each say so and make nothing; several PDFs each get their answer";
+        }
+
+        /// <summary>Two big lines with an email address and a phone number on a white picture.</summary>
+        static void ContactPicture(string path)
+        {
+            using (var bmp = new Bitmap(1500, 420))
+            using (var g = Graphics.FromImage(bmp))
+            using (var f = new Font("Segoe UI", 64))
+            {
+                g.Clear(Color.White);
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                g.DrawString("Email: test@example.com", f, Brushes.Black, 40, 30);
+                g.DrawString("Phone: +91 98765 43210", f, Brushes.Black, 40, 215);
+                bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            }
+        }
+
+        /// <summary>The kinds of chunks a PNG file holds, in order.</summary>
+        static List<string> PngChunks(string path)
+        {
+            var b = File.ReadAllBytes(path);
+            var types = new List<string>();
+            for (int p = 8; p + 8 <= b.Length;)
+            {
+                int length = (b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3];
+                types.Add(Encoding.ASCII.GetString(b, p + 4, 4));
+                p += 12 + length;
+            }
+            return types;
+        }
+
+        static async Task<string> CheckRedact(string dir)
+        {
+            if (!Vision.OcrAvailable) return "SKIP no text-reading language is installed on this PC, so nothing can be found or read back";
+            var folder = Folder(dir, "redact-check");
+            var pic = Path.Combine(folder, "Contact.png");
+            ContactPicture(pic);
+            var hash = Hash(pic);
+            var report = new List<string>();
+            using (var look = await RedactOps.Look(pic))
+            {
+                Expect(look.CanRead, "this PC's text reader opens the picture");
+                var email = look.Text.FirstOrDefault(f => f.Label == "Email");
+                var phone = look.Text.FirstOrDefault(f => f.Label == "Phone");
+                Expect(email != null && phone != null, "the email and the phone number are both found, got " + string.Join(", ", look.Text.Select(f => f.Label + " " + f.Rect)));
+                Expect(email.Rect.Y + email.Rect.Height / 2 < 210 && phone.Rect.Y + phone.Rect.Height / 2 > 210, "each box sits on its own line (email " + email.Rect + ", phone " + phone.Rect + ")");
+                report.Add("found " + string.Join(" and ", look.Text.Select(f => f.Label)));
+                var boxes = look.Text.Select(f => f.Rect).ToList();
+                foreach (var style in new[] { RedactStyle.Bar, RedactStyle.Pixelate, RedactStyle.Blur })
+                {
+                    var r = await Runner.Run(Catalog.Redact, new[] { pic }, new Options { RedactBoxes = boxes, RedactStyle = style }, null, CancellationToken.None);
+                    Expect(r.Failures.Count == 0, style.Title() + ": " + string.Join("; ", r.Failures));
+                    var outPath = r.Outputs.Single();
+                    Expect(Path.GetExtension(outPath) == ".png" && Path.GetFileName(outPath).StartsWith("Contact Redacted", StringComparison.Ordinal), style.Title() + ": named <name> Redacted.<same type>, got " + Path.GetFileName(outPath));
+                    var chunks = PngChunks(outPath);
+                    Expect(!chunks.Any(t => t == "tEXt" || t == "zTXt" || t == "iTXt" || t == "eXIf"), style.Title() + ": no hidden info in the file, its chunks are " + string.Join(" ", chunks));
+                    using (var back = await Images.Load(outPath))
+                    using (var original = await Images.Load(pic))
+                    {
+                        Expect(back.Width == look.Width && back.Height == look.Height, style.Title() + ": the same size");
+                        var lines = await Vision.ReadLines(back);
+                        var raw = string.Join(" ", lines.Select(l => l.Text));
+                        Expect(!raw.Contains("example") && !raw.Contains("98765") && !raw.Contains("43210") && !raw.Contains("test@"), style.Title() + ": the text can still be read: \"" + raw + "\"");
+                        var left = Redaction.FindText(lines);
+                        Expect(left.Count == 0, style.Title() + ": the finder still finds " + string.Join(", ", left.Select(f => f.Label)));
+                        var now = Images.Bgra(back);
+                        var was = Images.Bgra(original);
+                        long inside = 0, bar = 0, changed = 0;
+                        foreach (var box in boxes)
+                        {
+                            Expect(Redaction.Clip(box, back.Width, back.Height, out int x, out int y, out int w, out int h), "the box lies on the picture");
+                            for (int yy = y; yy < y + h; yy++)
+                                for (int xx = x; xx < x + w; xx++)
+                                {
+                                    int i = (yy * back.Width + xx) * 4;
+                                    inside++;
+                                    if (now[i] == Redaction.BarBlue && now[i + 1] == Redaction.BarGreen && now[i + 2] == Redaction.BarRed && now[i + 3] == 255) bar++;
+                                    if (Math.Abs(now[i] - was[i]) + Math.Abs(now[i + 1] - was[i + 1]) + Math.Abs(now[i + 2] - was[i + 2]) > 24) changed++;
+                                }
+                        }
+                        if (style == RedactStyle.Bar) Expect(bar == inside, "Black bar: every pixel inside a box is the bar colour, " + bar + " of " + inside + " are");
+                        else Expect(changed * 100 > inside * 2 && bar == 0, style.Title() + ": the pixels inside the boxes were really replaced, " + changed + " of " + inside + " changed");
+                    }
+                    report.Add(style.Title() + " ok");
+                }
+            }
+            Expect(Hash(pic) == hash, "the original picture is byte for byte what it was");
+            return string.Join(", ", report) + "; the original is unchanged";
+        }
+
+        /// <summary>Shows a window far outside every screen without taking the focus (so it paints and reacts) and lays it out.</summary>
+        static void OpenOffScreen(WinForms.Form form)
+        {
+            form.StartPosition = WinForms.FormStartPosition.Manual;
+            form.Location = new Point(-20000, -20000);
+            form.ShowInTaskbar = false;
+            var handle = form.Handle;
+            Native.ShowWindow(handle, Native.SW_SHOWNOACTIVATE);
+            WinForms.Application.DoEvents();
+            form.PerformLayout();
+        }
+
+        /// <summary>Lets the window's own message loop run until the condition holds.</summary>
+        static void Pump(Func<bool> done, int seconds = 60)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!done() && clock.Elapsed < TimeSpan.FromSeconds(seconds))
+            {
+                WinForms.Application.DoEvents();
+                Thread.Sleep(15);
+            }
+            Expect(done(), "finished within " + seconds + " seconds");
+        }
+
+        /// <summary>What is wrong with how a small window is laid out (an empty list means nothing): text that doesn't fit its box,
+        /// controls that overlap each other, or controls that stick out of the window. Call it while the window is shown.</summary>
+        static List<string> WindowProblems(WinForms.Form form)
+        {
+            var bad = new List<string>();
+            var leaves = Descendants(form).Where(c => c.Visible && (c is WinForms.Label || c is WinForms.ButtonBase || c is WinForms.TextBox)).ToList();
+            Rectangle Where(WinForms.Control c) => form.RectangleToClient(c.Parent.RectangleToScreen(c.Bounds));
+            string Name(WinForms.Control c) => c.GetType().Name + " \"" + (c.Text.Length > 24 ? c.Text.Substring(0, 24) : c.Text) + "\"";
+            foreach (var c in leaves)
+            {
+                var r = Where(c);
+                if (r.Left < -1 || r.Top < -1 || r.Right > form.ClientSize.Width + 1 || r.Bottom > form.ClientSize.Height + 1) bad.Add(Name(c) + " sticks out of the window");
+                if (c is WinForms.Label l && l.Text.Length > 0)
+                {
+                    // Ask the label itself how much room its words need at the width it has: it measures them the way it draws them.
+                    var need = l.GetPreferredSize(new Size(l.Width, 0));
+                    if (need.Height > l.Height + 1 || need.Width > l.Width + 1)
+                        bad.Add(Name(c) + " is cut off: it needs " + need.Width + " x " + need.Height + " px and has " + l.Width + " x " + l.Height);
+                }
+                else if (c is WinForms.ButtonBase b && b.Text.Length > 0)
+                {
+                    var need = WinForms.TextRenderer.MeasureText(b.Text, b.Font);
+                    if (need.Width > b.Width - (b is WinForms.Button ? 8 : 14)) bad.Add(Name(c) + " is cut off: its text needs " + need.Width + " px and it is " + b.Width + " wide");
+                }
+            }
+            for (int i = 0; i < leaves.Count; i++)
+                for (int j = i + 1; j < leaves.Count; j++)
+                    if (Where(leaves[i]).IntersectsWith(Where(leaves[j]))) bad.Add(Name(leaves[i]) + " overlaps " + Name(leaves[j]));
+            return bad;
+        }
+
+        /// <summary>A clean answer from <see cref="WindowProblems"/> only means something if it speaks up when it should: a label whose
+        /// box is too small for its words, a control that sticks out of the window, and two controls on top of each other.
+        /// It must also stay quiet for a window that is fine.</summary>
+        static Task<string> CheckWindowChecker()
+        {
+            return OnSta(() =>
+            {
+                using (var fine = new WinForms.Form { ClientSize = new Size(300, 130) })
+                {
+                    fine.Controls.Add(new WinForms.Label { Text = "Type the current password", AutoSize = true, UseMnemonic = false, Location = new Point(10, 10) });
+                    fine.Controls.Add(new WinForms.TextBox { Location = new Point(10, 40), Width = 200 });
+                    fine.Controls.Add(new WinForms.Button { Text = "Unlock", Location = new Point(10, 80), Size = new Size(90, 32) });
+                    OpenOffScreen(fine);
+                    var quiet = WindowProblems(fine);
+                    Expect(quiet.Count == 0, "a window that is fine has no problems, got " + string.Join("; ", quiet));
+                }
+                using (var bad = new WinForms.Form { ClientSize = new Size(300, 130) })
+                {
+                    bad.Controls.Add(new WinForms.Label { Text = "This sentence is much too long for a box that is only this small", AutoSize = false, UseMnemonic = false, Location = new Point(10, 10), Size = new Size(100, 16) });
+                    bad.Controls.Add(new WinForms.TextBox { Location = new Point(10, 60), Width = 120 });
+                    bad.Controls.Add(new WinForms.TextBox { Location = new Point(60, 62), Width = 120 });
+                    bad.Controls.Add(new WinForms.Button { Text = "Unlock", Location = new Point(250, 90), Size = new Size(90, 32) });
+                    bad.Controls.Add(new WinForms.Button { Text = "A caption far too long for this little button", Location = new Point(10, 95), Size = new Size(70, 28) });
+                    OpenOffScreen(bad);
+                    var found = WindowProblems(bad);
+                    Expect(found.Any(p => p.StartsWith("Label") && p.Contains("is cut off")), "it notices a label that is too small for its words, got " + string.Join("; ", found));
+                    Expect(found.Any(p => p.StartsWith("Button \"Unlock\"") && p.Contains("sticks out of the window")), "it notices a button that sticks out of the window, got " + string.Join("; ", found));
+                    Expect(found.Any(p => p.StartsWith("TextBox") && p.Contains("overlaps")), "it notices two boxes on top of each other, got " + string.Join("; ", found));
+                    Expect(found.Any(p => p.StartsWith("Button \"A caption") && p.Contains("is cut off")), "it notices a button whose caption is cut off, got " + string.Join("; ", found));
+                }
+                return "it stays quiet for a window that is fine and notices a cut-off label, a cut-off button caption, a control sticking out and two controls overlapping";
+            });
+        }
+
+        static Task<string> CheckRedactWindow(string dir)
+        {
+            return OnSta(() =>
+            {
+                var folder = Folder(dir, "redact-window-check");
+                var pic = Path.Combine(folder, "Contact.png");
+                ContactPicture(pic);
+                var ini = Path.Combine(folder, "settings.ini"); // its own file: the real settings are never touched
+                var settings = new DragShift.Core.Settings(ini);
+                var did = new List<string>();
+                var problems = new List<string>();
+
+                if (Vision.OcrAvailable)
+                {
+                    IList<Box> sent = null;
+                    RedactStyle sentStyle = RedactStyle.Bar;
+                    using (var form = new RedactForm(pic, settings))
+                    {
+                        form.Chosen += (boxes, style) => { sent = boxes; sentStyle = style; };
+                        OpenOffScreen(form);
+                        Expect(form.Note.Text == RedactForm.Looking && !form.SaveButton.Enabled, "while it looks, it says so and Save Redacted waits");
+                        form.Begin();
+                        Pump(() => form.Ready.IsCompleted);
+                        Expect(form.Labels.SequenceEqual(new[] { "Email", "Phone" }), "the email and the phone number are listed, got " + string.Join(", ", form.Labels));
+                        Expect(form.SaveButton.Enabled && !form.Note.Visible, "Save Redacted is ready and there is no message");
+                        Expect(form.FacesBox.Text == "Find faces too" && form.FacesBox.Enabled == Vision.FacesAvailable && form.FacesBox.Checked == Vision.FacesAvailable, "Find faces too is ticked when this PC can look for faces");
+                        Expect(form.StyleChoices.Select(b => b.Text).SequenceEqual(new[] { "Black bar", "Pixelate", "Blur" }) && form.Style == RedactStyle.Bar, "the styles are Black bar, Pixelate, Blur, and the black bar is first");
+                        Expect(form.BoxesOn.Count == 2, "both boxes start on");
+
+                        var view = form.View;
+                        Point Centre(Box b) { var r = view.ToView(b); return new Point((int)(r.X + r.Width / 2), (int)(r.Y + r.Height / 2)); }
+                        Point At(double x, double y) { var r = view.ToView(new Box(x, y, 0, 0)); return new Point((int)Math.Round(r.X), (int)Math.Round(r.Y)); }
+                        var emailBox = form.BoxesOn[0];
+                        var phoneBox = form.BoxesOn[1];
+                        view.Press(Centre(emailBox)); view.Release(Centre(emailBox));
+                        Expect(form.BoxesOn.Count == 1, "clicking a box turns it off");
+                        view.Press(Centre(emailBox)); view.Release(Centre(emailBox));
+                        Expect(form.BoxesOn.Count == 2, "clicking it again turns it on");
+                        did.Add("a click turns a box off and on");
+
+                        // Drag on the picture: a box of your own. A drag of a few pixels is not a box.
+                        var from = At(60, 330);
+                        var to = At(400, 395);
+                        view.Press(from); view.Drag(to); view.Release(to);
+                        Expect(form.Labels.Count == 3 && form.Labels[2] == "Your box" && form.BoxesOn.Count == 3, "dragging adds a box called Your box");
+                        var mine = form.BoxesOn[2];
+                        Expect(Math.Abs(mine.X - 60) < 6 && Math.Abs(mine.Y - 330) < 6 && Math.Abs(mine.Width - 340) < 10 && Math.Abs(mine.Height - 65) < 10, "the new box is where it was dragged, in the picture's own pixels, got " + mine);
+                        var small = At(700, 340);
+                        view.Press(small); view.Drag(new Point(small.X + 5, small.Y + 5)); view.Release(new Point(small.X + 5, small.Y + 5));
+                        Expect(form.Labels.Count == 3, "a drag of a few pixels is not a box");
+                        did.Add("a drag adds a box of your own");
+
+                        // Phone off, style Blur: the picture shows an on box, an off box and your own.
+                        view.Press(Centre(phoneBox)); view.Release(Centre(phoneBox));
+                        Expect(form.BoxesOn.Count == 2, "the phone box is off");
+                        form.StyleChoices[2].Checked = true;
+                        Expect(form.Style == RedactStyle.Blur && view.Style == RedactStyle.Blur, "Blur is chosen");
+                        Picture(form, Path.Combine(dir, "redact-window.png"), () => problems.AddRange(WindowProblems(form).Select(p => "Redact: " + p)));
+                        Expect(form.Note.Parent != null, "the window still has its parts");
+
+                        form.SaveNow();
+                        Expect(sent != null && sent.Count == 2 && sentStyle == RedactStyle.Blur, "Save Redacted hands over the two boxes that are on and the style, got " + (sent == null ? "nothing" : sent.Count + " boxes"));
+                        Expect(form.IsDisposed, "the window closes");
+                        Expect(File.ReadAllText(ini).Contains("redact.style = blur"), "the style is remembered in the settings, in the Mac's words");
+                        did.Add("Save hands over what is on, and the style is remembered");
+                    }
+                    using (var next = new RedactForm(pic, settings))
+                        Expect(next.StyleChoices[2].Checked && next.Style == RedactStyle.Blur, "the style from last time is already chosen");
+                }
+
+                // No text reader: the window still opens, says exactly this, and lets you draw.
+                using (var form = new RedactForm(pic, settings, async (path, opened) =>
+                {
+                    var scan = await RedactOps.Look(path, opened);
+                    scan.CanRead = false;
+                    scan.Text = new List<Finding>();
+                    return scan;
+                }))
+                {
+                    OpenOffScreen(form);
+                    form.Begin();
+                    Pump(() => form.Ready.IsCompleted);
+                    Expect(form.Note.Visible && form.Note.Text.StartsWith("Windows couldn't read the text here. Draw boxes over what you want hidden.", StringComparison.Ordinal), "the no-reader sentence, got \"" + form.Note.Text + "\"");
+                    Expect(!form.SaveButton.Enabled, "nothing to save before a box is drawn");
+                    var view = form.View;
+                    var a = view.ToView(new Box(60, 40, 0, 0));
+                    var b = view.ToView(new Box(500, 130, 0, 0));
+                    view.Press(new Point((int)a.X, (int)a.Y)); view.Drag(new Point((int)b.X, (int)b.Y)); view.Release(new Point((int)b.X, (int)b.Y));
+                    Expect(form.SaveButton.Enabled && form.Labels.Count == 1, "a box drawn by hand can be saved");
+                    Picture(form, Path.Combine(dir, "redact-window-no-reader.png"), () => problems.AddRange(WindowProblems(form).Select(p => "Redact without a text reader: " + p)));
+                    did.Add("no text reader: the sentence, and drawing still works");
+                }
+
+                // A file that isn't a picture: the window says so and nothing can be saved.
+                var broken = Path.Combine(folder, "Broken.png");
+                File.WriteAllText(broken, "this is not a picture");
+                using (var form = new RedactForm(broken, settings))
+                {
+                    OpenOffScreen(form);
+                    form.Begin();
+                    Pump(() => form.Ready.IsCompleted);
+                    Expect(form.Note.Visible && form.Note.Text.Contains("isn't a picture") && !form.SaveButton.Enabled, "a file that isn't a picture is said so, got \"" + form.Note.Text + "\"");
+                    did.Add("a file that isn't a picture is said so");
+                }
+                Expect(problems.Count == 0, "the window is laid out properly: " + string.Join("; ", problems));
+                return string.Join("; ", did) + "; pictures saved (redact-window.png, redact-window-no-reader.png), nothing cut off or overlapping" + (Vision.OcrAvailable ? "" : " (the found-and-listed half was skipped: no text reader on this PC)");
+            });
+        }
+
+        static Task<string> CheckPasswordWindow(string dir, string fixture)
+        {
+            return OnSta(() =>
+            {
+                if (fixture == null) return "SKIP the locked test PDF (windows\\tests\\fixtures\\locked-1234.pdf) isn't next to this copy";
+                var folder = Folder(dir, "password-window-check");
+                var locked = Path.Combine(folder, "locked-1234.pdf");
+                File.Copy(fixture, locked);
+                var files = new[] { locked };
+                var problems = new List<string>();
+                string heard = null;
+                int heardCount = 0;
+                const string typed = "zq-secret-7";
+                using (var form = new PasswordForm(files, pw => PdfRewrite.CheckPassword(files, pw)))
+                {
+                    form.Chosen += pw => { heard = pw; heardCount++; };
+                    OpenOffScreen(form);
+                    Expect(!form.UnlockButton.Enabled, "Unlock waits for a password");
+                    Expect(form.Box.UseSystemPasswordChar, "the box is masked");
+                    Picture(form, Path.Combine(dir, "password-window.png"), () => problems.AddRange(WindowProblems(form).Select(p => "Unlock: " + p)));
+
+                    form.Box.Text = typed;
+                    Expect(form.UnlockButton.Enabled, "Unlock is ready once something is typed");
+                    var press = form.Press();
+                    Pump(() => press.IsCompleted);
+                    Expect(!form.IsDisposed && heardCount == 0, "a wrong password keeps the window open");
+                    Expect(form.Problem.Text == "Wrong password for locked-1234.pdf.", "it says so, got \"" + form.Problem.Text + "\"");
+                    Expect(!form.Problem.Text.Contains(typed), "the message never repeats the password");
+                    Expect(form.UnlockButton.Enabled && form.UnlockButton.Text == "Unlock", "the person can try again");
+                    Picture(form, Path.Combine(dir, "password-window-wrong.png"), () => problems.AddRange(WindowProblems(form).Select(p => "Unlock, wrong password: " + p)));
+
+                    form.Box.Text = "1234";
+                    Expect(form.Problem.Text == "", "typing again clears the message");
+                    press = form.Press();
+                    Pump(() => press.IsCompleted);
+                    Expect(form.IsDisposed && heard == "1234" && heardCount == 1, "the right password closes the window and is handed over once");
+                }
+                // A long name and several PDFs.
+                var longName = Path.Combine(folder, "A statement with a very long name that goes on and on and on for the whole year 2025.pdf");
+                File.Copy(fixture, longName);
+                using (var form = new PasswordForm(new[] { longName }))
+                {
+                    OpenOffScreen(form);
+                    Picture(form, Path.Combine(dir, "password-window-long-name.png"), () => problems.AddRange(WindowProblems(form).Select(p => "Unlock, long name: " + p)));
+                }
+                using (var form = new PasswordForm(new[] { locked, longName }))
+                {
+                    OpenOffScreen(form);
+                    Expect(Descendants(form).OfType<WinForms.Label>().Any(l => l.Text == "2 PDFs"), "several PDFs are shown as a count");
+                }
+                Expect(problems.Count == 0, "the window is laid out properly: " + string.Join("; ", problems));
+                return "a wrong password keeps the window open and says so without repeating it; the right one closes it and is handed over once; pictures saved (password-window.png, password-window-wrong.png, password-window-long-name.png), nothing cut off or overlapping";
+            });
         }
 
         static Task<string> CheckRingDismissal()
@@ -1064,7 +1598,7 @@ namespace DragShift
 
         /// <summary>A window as a picture. Windows only paints the controls of a window that is shown, so it is shown far
         /// outside every screen and without taking the focus, drawn, and hidden again.</summary>
-        static void Picture(WinForms.Form form, string path)
+        static void Picture(WinForms.Form form, string path, Action whileShown = null)
         {
             form.StartPosition = WinForms.FormStartPosition.Manual;
             form.Location = new Point(-20000, -20000);
@@ -1075,6 +1609,7 @@ namespace DragShift
             form.PerformLayout();
             try
             {
+                whileShown?.Invoke(); // measurements need the window shown: a hidden window reports every control as not visible
                 using (var bmp = new Bitmap(form.Width, form.Height))
                 {
                     form.DrawToBitmap(bmp, new Rectangle(0, 0, form.Width, form.Height));
@@ -1143,6 +1678,274 @@ namespace DragShift
             });
         }
 
+        // ---- the About tab's cup ----
+
+        /// <summary>A picture's pixels as bytes: blue, green, red, alpha for each, row after row.</summary>
+        static byte[] Raw(Bitmap bmp)
+        {
+            var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var bytes = new byte[data.Stride * bmp.Height];
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+                return bytes;
+            }
+            finally { bmp.UnlockBits(data); }
+        }
+
+        // The cup's colours as the drawing makes them. An antialiased edge is a blend of two colours and matches neither.
+        static bool IsCoffee(byte[] px, int i) => Math.Abs(px[i + 2] - 89) <= 20 && Math.Abs(px[i + 1] - 45) <= 16 && Math.Abs(px[i] - 20) <= 16;
+        static bool IsYellow(byte[] px, int i) => px[i + 2] >= 225 && px[i + 1] >= 150 && px[i + 1] <= 235 && px[i] <= 130 && px[i + 2] - px[i] >= 110;
+
+        /// <summary>The cup alone on white, `t` of the way from sitting to spilled and `width` wide, in a picture the size of the room
+        /// it needs (the Mac's frame for it). `centre` is the point the cup turns around.</summary>
+        static Bitmap CupOnWhite(float t, float width, out PointF centre)
+        {
+            int w = (int)Math.Ceiling(width * CupPainter.RoomAcross), h = (int)Math.Ceiling(width * CupPainter.RoomDown);
+            centre = new PointF(w / 2f, h / 2f);
+            var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.White);
+                CupPainter.Draw(g, centre, width, t);
+            }
+            return bmp;
+        }
+
+        /// <summary>The cup's outline where it lies in a picture: `width` wide, turning around `centre`, tipped by `tilt` degrees.</summary>
+        static GraphicsPath CupOutline(PointF centre, float width, float tilt)
+        {
+            var points = new PointF[CupArt.Outline.Length / 2];
+            for (int i = 0; i < points.Length; i++) points[i] = new PointF(CupArt.Outline[2 * i], CupArt.Outline[2 * i + 1]);
+            var path = new GraphicsPath();
+            path.AddPolygon(points);
+            using (var m = new Matrix())
+            {
+                m.Translate(centre.X, centre.Y);
+                m.Scale(width / 1000f, width / 1000f);
+                m.Rotate(tilt);
+                path.Transform(m);
+            }
+            return path;
+        }
+
+        static PointF MiddleOfYellow(Bitmap bmp)
+        {
+            var px = Raw(bmp);
+            double sx = 0, sy = 0;
+            int n = 0;
+            for (int y = 0; y < bmp.Height; y++)
+                for (int x = 0; x < bmp.Width; x++)
+                    if (IsYellow(px, (y * bmp.Width + x) * 4)) { sx += x + 0.5; sy += y + 0.5; n++; }
+            Expect(n > 0, "there is yellow in the picture");
+            return new PointF((float)(sx / n), (float)(sy / n));
+        }
+
+        /// <summary>Where the coffee-coloured pixels of a picture of the cup are: outside the cup's outline, left of it, and how far left the coffee reaches.</summary>
+        static void CoffeeBeyond(Bitmap bmp, GraphicsPath outline, out int outside, out int leftOf, out float farthestLeft)
+        {
+            var px = Raw(bmp);
+            var bounds = outline.GetBounds();
+            outside = leftOf = 0;
+            farthestLeft = float.MaxValue;
+            for (int y = 0; y < bmp.Height; y++)
+                for (int x = 0; x < bmp.Width; x++)
+                {
+                    if (!IsCoffee(px, (y * bmp.Width + x) * 4)) continue;
+                    if (!outline.IsVisible(x + 0.5f, y + 0.5f)) outside++;
+                    if (x + 1 <= bounds.Left) leftOf++;
+                    farthestLeft = Math.Min(farthestLeft, x);
+                }
+        }
+
+        static bool Same(byte[] a, byte[] b) => a.Length == b.Length && a.SequenceEqual(b);
+
+        static Task<string> CheckCup(string dir)
+        {
+            return OnSta(() =>
+            {
+                Expect(Tip.Line(0).Contains("0 files") && Tip.Line(214).Contains("214 files"), "the count is always in the line");
+                var invariant = System.Globalization.CultureInfo.InvariantCulture;
+                const float big = 216; // four times the real width (54), so every curve can be looked at
+
+                // Six pictures on white, from sitting still to the full spill. The coffee must travel left and keep going.
+                var reach = new List<float>();
+                foreach (var t in new[] { 0f, 0.2f, 0.4f, 0.6f, 0.8f, 1f })
+                    using (var bmp = CupOnWhite(t, big, out var centre))
+                    using (var outline = CupOutline(centre, big, CupArt.Tilt * (1 - (1 - t) * (1 - t))))
+                    {
+                        bmp.Save(Path.Combine(dir, "cup-t" + t.ToString("0.0", invariant) + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                        CoffeeBeyond(bmp, outline, out _, out _, out var farthest);
+                        reach.Add(farthest);
+                    }
+                for (int i = 1; i < reach.Count; i++) Expect(reach[i] <= reach[i - 1] + 0.5f, "the coffee only moves one way as the cup is pulled: " + string.Join(", ", reach));
+                Expect(reach[0] - reach[reach.Count - 1] > 40, "the coffee travels a long way left between sitting and spilled: " + string.Join(", ", reach));
+
+                // At rest the coffee is all inside the cup; spilled, some of it is out past the cup's left side.
+                int outsideAtRest, leftAtRest, outsideSpilled, leftSpilled;
+                using (var bmp = CupOnWhite(0, big, out var centre)) using (var outline = CupOutline(centre, big, 0))
+                    CoffeeBeyond(bmp, outline, out outsideAtRest, out leftAtRest, out _);
+                using (var bmp = CupOnWhite(1, big, out var centre)) using (var outline = CupOutline(centre, big, CupArt.Tilt))
+                    CoffeeBeyond(bmp, outline, out outsideSpilled, out leftSpilled, out _);
+                Expect(outsideAtRest == 0, "at rest no coffee-coloured pixel lies outside the cup's outline, " + outsideAtRest + " do");
+                Expect(leftSpilled >= 30, "spilled, coffee-coloured pixels lie left of the cup's outline, " + leftSpilled + " do");
+
+                // Tipping and spilling happen around one point: the middle of the yellow stays put (less than a pixel at the real size).
+                double shiftReal = 0, shiftBig = 0;
+                foreach (var width in new[] { 54f, big })
+                    using (var a = CupOnWhite(0, width, out _)) using (var b = CupOnWhite(1, width, out _))
+                    {
+                        PointF p = MiddleOfYellow(a), q = MiddleOfYellow(b);
+                        double moved = Math.Sqrt(Math.Pow(p.X - q.X, 2) + Math.Pow(p.Y - q.Y, 2));
+                        Expect(moved < width / 54, "the middle of the yellow moves less than " + (width / 54).ToString("0.#", invariant) + " px at width " + width + ", it moved " + moved.ToString("0.00", invariant));
+                        if (width == 54) shiftReal = moved; else shiftBig = moved;
+                    }
+
+                // Anything below 0 or above 1 is the nearest end, exactly.
+                using (var low = CupOnWhite(-0.5f, 54, out _)) using (var zero = CupOnWhite(0, 54, out _))
+                using (var high = CupOnWhite(1.7f, 54, out _)) using (var one = CupOnWhite(1, 54, out _))
+                    Expect(Same(Raw(low), Raw(zero)) && Same(Raw(high), Raw(one)), "t below 0 draws the same as 0, and t above 1 the same as 1");
+
+                // The drawing leaves the graphics as it found them.
+                using (var bmp = new Bitmap(120, 100, PixelFormat.Format32bppArgb))
+                using (var g = Graphics.FromImage(bmp))
+                {
+                    g.SmoothingMode = SmoothingMode.None;
+                    g.TranslateTransform(3, 4);
+                    g.SetClip(new Rectangle(10, 10, 50, 50));
+                    var matrix = g.Transform.Elements;
+                    var clip = g.ClipBounds;
+                    CupPainter.Draw(g, new PointF(60, 50), 54, 1);
+                    Expect(g.SmoothingMode == SmoothingMode.None && g.Transform.Elements.SequenceEqual(matrix) && g.ClipBounds == clip,
+                           "the cup's drawing puts the transform, the clip and the smoothing back");
+                }
+
+                // The cup in its area, as the About tab shows it: three pictures with the ring open, and one at rest.
+                var size = CoffeeCup.Natural;
+                int scale = 2;
+                var window = SystemColors.Control;
+                var looks = new[] { ("cup-closed", PointF.Empty, false), ("cup-ring-small", new PointF(-55, 25), true),
+                                    ("cup-ring-medium", new PointF(0, 62), true), ("cup-ring-large", new PointF(55, 25), true) };
+                foreach (var look in looks)
+                    using (var bmp = new Bitmap(size.Width * scale, size.Height * scale, PixelFormat.Format32bppArgb))
+                    using (var alone = new Bitmap(bmp.Width, bmp.Height, PixelFormat.Format32bppArgb))
+                    using (var cup = new CoffeeCup { Size = new Size(bmp.Width, bmp.Height) })
+                    {
+                        var offset = new PointF(look.Item2.X * scale, look.Item2.Y * scale);
+                        using (var g = Graphics.FromImage(bmp)) CoffeeCup.Draw(g, bmp.Width, offset, look.Item3, window, SystemColors.ControlText);
+                        bmp.Save(Path.Combine(dir, look.Item1 + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                        // The same cup drawn alone on a clear picture: wherever that is solid, the picture of the area shows exactly that.
+                        var at = new PointF(cup.Saucer.X + offset.X, cup.Saucer.Y + offset.Y);
+                        using (var g = Graphics.FromImage(alone)) { g.Clear(Color.Transparent); CupPainter.Draw(g, at, 54 * scale, CoffeeCup.Pulled(offset, scale)); }
+                        byte[] shown = Raw(bmp), cupOnly = Raw(alone);
+                        int solid = 0, wrong = 0;
+                        for (int i = 0; i < cupOnly.Length; i += 4)
+                            if (cupOnly[i + 3] == 255)
+                            {
+                                solid++;
+                                // (Within 3 of 255 in any colour: a pixel built from several edges of the drawing is rounded differently over a window colour.)
+                                if (Math.Abs(cupOnly[i] - shown[i]) > 3 || Math.Abs(cupOnly[i + 1] - shown[i + 1]) > 3 || Math.Abs(cupOnly[i + 2] - shown[i + 2]) > 3) wrong++;
+                            }
+                        Expect(solid > 2000 && wrong == 0, look.Item1 + ": the cup is drawn where it is held (" + solid + " solid pixels, " + wrong + " different)");
+                        if (!look.Item3)
+                        {
+                            // Nothing but the cup and the faint saucer under it: no circle behind the cup, as the old picture had.
+                            using (var outline = CupOutline(at, 54 * scale, 0))
+                            using (var margin = new Pen(Color.Black, 6))
+                            using (var nearCup = (GraphicsPath)outline.Clone())
+                            {
+                                nearCup.Widen(margin);
+                                var saucer = new RectangleF(cup.Saucer.X - 23 * scale - 2, cup.Saucer.Y + 15 * scale - 2, 46 * scale + 4, 10 * scale + 4);
+                                int stray = 0;
+                                for (int y = 0; y < bmp.Height; y++)
+                                    for (int x = 0; x < bmp.Width; x++)
+                                    {
+                                        int i = (y * bmp.Width + x) * 4;
+                                        bool plain = shown[i] == window.B && shown[i + 1] == window.G && shown[i + 2] == window.R;
+                                        if (!plain && !outline.IsVisible(x + 0.5f, y + 0.5f) && !nearCup.IsVisible(x + 0.5f, y + 0.5f) && !saucer.Contains(x + 0.5f, y + 0.5f)) stray++;
+                                    }
+                                Expect(stray == 0, look.Item1 + ": only the cup and its saucer are drawn, " + stray + " other pixels are");
+                            }
+                        }
+                    }
+
+                // Pulled as far as it goes in every direction it can go, the drawing never reaches the edge of its area (no clipping), at both sizes.
+                int poses = 0;
+                foreach (int sc in new[] { 1, 2 })
+                    foreach (bool open in new[] { false, true })
+                    {
+                        var offsets = new List<PointF> { new PointF(-73.9f, -4), new PointF(73.9f, -4), new PointF(0, -4) };
+                        for (int a = 0; a <= 180; a += 15) offsets.Add(new PointF((float)(74 * Math.Cos(a * Math.PI / 180)), (float)(74 * Math.Sin(a * Math.PI / 180))));
+                        foreach (var o in offsets)
+                            using (var bmp = new Bitmap(size.Width * sc, size.Height * sc, PixelFormat.Format32bppArgb))
+                            {
+                                using (var g = Graphics.FromImage(bmp)) CoffeeCup.Draw(g, bmp.Width, new PointF(o.X * sc, o.Y * sc), open, Color.White, Color.Black);
+                                var px = Raw(bmp);
+                                int touching = 0;
+                                for (int y = 0; y < bmp.Height; y++)
+                                    for (int x = 0; x < bmp.Width; x++)
+                                    {
+                                        if (x > 1 && y > 1 && x < bmp.Width - 2 && y < bmp.Height - 2) continue;
+                                        int i = (y * bmp.Width + x) * 4;
+                                        if (px[i] != 255 || px[i + 1] != 255 || px[i + 2] != 255) touching++;
+                                    }
+                                Expect(touching == 0, "cup pulled to " + o + (open ? " with the ring open" : "") + " at " + sc + "00%: " + touching + " pixels at the edge of its area");
+                                poses++;
+                            }
+                    }
+
+                // Held exactly under the pointer, kept inside the ring, and back on its saucer in about a quarter of a second when let go.
+                var mouse = new Func<string, System.Reflection.MethodInfo>(name => typeof(WinForms.Control).GetMethod(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic));
+                long took = 0;
+                using (var cup = new CoffeeCup())
+                {
+                    var made = cup.Handle; // a real window that is never shown, so it can take the mouse
+                    float k = cup.Width / (float)size.Width;
+                    var saucer = Point.Round(cup.Saucer);
+                    void Mouse(string what, int dx, int dy) => mouse(what).Invoke(cup, new object[] { new WinForms.MouseEventArgs(WinForms.MouseButtons.Left, 1, saucer.X + dx, saucer.Y + dy, 0) });
+                    Mouse("OnMouseDown", 40, 40);
+                    Mouse("OnMouseMove", 50, 50);
+                    Expect(cup.Held == PointF.Empty, "a press away from the cup's saucer takes nothing");
+                    Mouse("OnMouseUp", 50, 50);
+                    Mouse("OnMouseDown", 0, 0);
+                    Mouse("OnMouseMove", -30, 10);
+                    Expect(cup.Held == new PointF(-30, 10), "held, the cup is exactly under the pointer, no easing: " + cup.Held);
+                    Mouse("OnMouseMove", -500, 0);
+                    Expect(Math.Abs(cup.Held.X + 74 * k) < 0.01 && cup.Held.Y == 0 && CoffeeCup.Pulled(cup.Held, k) == 1, "pulled far, it stops at the edge of the ring: " + cup.Held);
+                    Mouse("OnMouseMove", 0, -50);
+                    Expect(cup.Held == new PointF(0, -4 * k), "it can't go above its saucer by more than 4 px: " + cup.Held);
+                    Mouse("OnMouseMove", -20, 40);
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    Mouse("OnMouseUp", -20, 40);
+                    if (!Native.Animations) Expect(cup.Held == PointF.Empty, "Windows is set to show no animations: the cup is back at once");
+                    else
+                    {
+                        Expect(cup.Settling && cup.Held != PointF.Empty, "let go, the cup starts back");
+                        while (cup.Settling && watch.ElapsedMilliseconds < 3000) { WinForms.Application.DoEvents(); Thread.Sleep(4); }
+                        Expect(!cup.Settling && cup.Held == PointF.Empty, "the cup ends on its saucer");
+                    }
+                    took = watch.ElapsedMilliseconds;
+                    Expect(!Native.Animations || (took >= 200 && took <= 900), "about a quarter of a second to get back, took " + took + " ms");
+                }
+                var away = new PointF(-50, 20);
+                Expect(CoffeeCup.Back(away, 0) == away && CoffeeCup.Back(away, 250) == PointF.Empty && CoffeeCup.Back(away, 5000) == PointF.Empty, "the way back starts where the cup was let go and ends on the saucer");
+                float last = float.MaxValue;
+                for (int ms = 0; ms <= 250; ms += 25)
+                {
+                    var p = CoffeeCup.Back(away, ms);
+                    float far = (float)Math.Sqrt(p.X * p.X + p.Y * p.Y);
+                    Expect(far < last || far == 0, "the cup only moves home, never away, at " + ms + " ms");
+                    last = far;
+                }
+                Expect(CoffeeCup.Pulled(PointF.Empty, 1) == 0 && CoffeeCup.Pulled(new PointF(-37, 0), 1) == 0.5f && CoffeeCup.Pulled(new PointF(0, 300), 1) == 1 && CoffeeCup.Pulled(new PointF(0, 148), 2) == 1,
+                       "how far it is tipped follows how far it is pulled, 0 at the saucer and 1 at the edge of the ring, at any scale");
+
+                return "6 pictures; coffee " + outsideAtRest + " px outside the cup at rest, " + leftSpilled + " px left of it spilled; "
+                       + "yellow middle moved " + shiftReal.ToString("0.00", invariant) + " px (" + shiftBig.ToString("0.00", invariant) + " px at 4 times the size); "
+                       + poses + " pulled poses not clipped; back in " + took + " ms";
+            });
+        }
+
         static Task<string> CheckAboutRefresh(string dir)
         {
             return OnSta(() =>
@@ -1154,25 +1957,280 @@ namespace DragShift
                 using (var form = new SettingsForm(settings, caps))
                 {
                     var labels = Descendants(form).OfType<WinForms.Label>().ToList();
-                    var pc = labels.Single(l => l.Text.StartsWith("This PC:", StringComparison.Ordinal));
+                    // About lists what this PC can do as lines of their own (a green tick and "on", or a grey dash and what to do about it).
+                    StatusRow Row(string name) => labels.OfType<StatusRow>().Single(l => l.Text.StartsWith(name, StringComparison.Ordinal));
+                    var heic = Row("HEIC saving");
                     var tally = labels.Single(l => l.Text.StartsWith("DragShift has fixed ", StringComparison.Ordinal));
-                    Expect(pc.Text.Contains("HEIC saving off") && tally.Text.Contains("0 files"), "initial capability and zero count");
+                    Expect(!heic.Good && !heic.Text.Contains("— on") && tally.Text.Contains("0 files"), "initial capability and zero count");
+                    Expect(Row("Text reading").Text == "Text reading — on" && Row("Face finding").Text == "Face finding — on" && Row("Text reading").Good && Row("Face finding").Good,
+                           "text reading and face finding start on, as this check's Capabilities say");
                     var handle = form.Handle; // hidden real window for the background completion callback
                     Task.Run(() => caps.HeicWrite = true).GetAwaiter().GetResult();
                     var until = DateTime.UtcNow.AddSeconds(3);
-                    while (!pc.Text.Contains("HEIC saving on") && DateTime.UtcNow < until)
+                    while (!heic.Good && DateTime.UtcNow < until)
                     {
                         WinForms.Application.DoEvents();
                         Thread.Sleep(10);
                     }
-                    Expect(pc.Text.Contains("HEIC saving on"), "the completed codec check updates the existing window");
+                    Expect(heic.Good && heic.Text == "HEIC saving — on", "the completed codec check updates the existing window");
                     settings.AddFixed(2);
                     Expect(tally.Text.Contains("2 files"), "two completed files update the existing tally");
+                    Expect(((RichLine)tally).Bold == "2 files" && tally.Text.Contains("fixed 2 files for you"), "the count is the part shown in bold");
                     settings.AddFixed(0);
                     Expect(tally.Text.Contains("2 files"), "an action with no output does not increase the tally");
                 }
                 caps.HeicWrite = false; // the disposed form is no longer subscribed
                 return "background codec check and current tally; no window shown";
+            });
+        }
+
+        static Task<string> CheckSettingsTabs(string dir)
+        {
+            return OnSta(() =>
+            {
+                var ini = Path.Combine(dir, "settings-tabs-test.ini");
+                File.Delete(ini);
+                using (var form = new SettingsForm(new DragShift.Core.Settings(ini), Capabilities.All))
+                {
+                    var pages = form.Controls.OfType<WinForms.TabControl>().Single();
+                    var strip = form.Controls.OfType<TabStrip>().Single();
+                    Expect(pages.TabCount == 6, "six pages, got " + pages.TabCount);
+                    // The keyboard stops once, on the visible names; the control that holds the pages (its own names are hidden) is no stop.
+                    Expect(strip.TabStop && !pages.TabStop && strip.TabIndex < pages.TabIndex, "the names are the one stop, ahead of the pages");
+
+                    // A screen reader gets the six names, in order, as tabs of a tab list, the open one marked.
+                    var list = strip.AccessibilityObject;
+                    Expect(list.Role == WinForms.AccessibleRole.PageTabList && list.GetChildCount() == 6, "a tab list of six");
+                    for (int i = 0; i < 6; i++)
+                    {
+                        var tab = list.GetChild(i);
+                        Expect(tab != null && tab.Name == pages.TabPages[i].Text && tab.Role == WinForms.AccessibleRole.PageTab && tab.Parent == list,
+                               "tab " + i + " is named " + pages.TabPages[i].Text);
+                        Expect(tab.Bounds.Width > 0 && tab.Bounds.Height > 0, "tab " + i + " has a place on the screen");
+                    }
+                    Expect(list.GetChild(6) == null && list.GetChild(-1) == null, "no seventh tab");
+                    Expect(pages.AccessibilityObject.GetChildCount() == 6 && pages.AccessibilityObject.GetChild(0) != null, "the pages control tells about its pages, not a second row of names");
+
+                    bool Open(int i) => (list.GetChild(i).State & WinForms.AccessibleStates.Selected) != 0;
+                    for (int i = 0; i < 6; i++)
+                    {
+                        pages.SelectedIndex = i;
+                        int open = 0;
+                        for (int j = 0; j < 6; j++) if (Open(j)) open++;
+                        Expect(open == 1 && Open(i) && list.GetSelected().Name == pages.TabPages[i].Text, "only " + pages.TabPages[i].Text + " is marked open");
+                    }
+                    list.GetChild(4).DoDefaultAction();
+                    Expect(pages.SelectedIndex == 4, "choosing a tab from a screen reader opens its page");
+
+                    // Arrow keys, Home and End on the names switch pages, and stop at the ends.
+                    var onKeyDown = typeof(WinForms.Control).GetMethod("OnKeyDown", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    int Press(WinForms.Keys key) { onKeyDown.Invoke(strip, new object[] { new WinForms.KeyEventArgs(key) }); return pages.SelectedIndex; }
+                    Expect(Press(WinForms.Keys.Right) == 5 && Press(WinForms.Keys.Right) == 5, "right goes to the next page and stops at the last");
+                    Expect(Press(WinForms.Keys.Left) == 4 && Press(WinForms.Keys.Home) == 0 && Press(WinForms.Keys.Left) == 0, "left goes back, Home goes to the first and left stops there");
+                    Expect(Press(WinForms.Keys.End) == 5, "End goes to the last");
+
+                    // The keyboard stays on the names while the pages change: the control that holds the pages is hidden, and it used to
+                    // take the focus on the first arrow key (the arrows still worked, but the focus mark was gone and a screen reader
+                    // was pointed at a control nobody can see). This needs the window shown, far outside every screen.
+                    form.StartPosition = WinForms.FormStartPosition.Manual;
+                    form.Location = new Point(-20000, -20000);
+                    form.ShowInTaskbar = false;
+                    var handle = form.Handle;
+                    Native.ShowWindow(handle, Native.SW_SHOWNOACTIVATE);
+                    WinForms.Application.DoEvents();
+                    try
+                    {
+                        pages.SelectedIndex = 0;
+                        strip.Focus();
+                        Expect(strip.Focused, "the names can take the keyboard");
+                        foreach (var key in new[] { WinForms.Keys.Right, WinForms.Keys.Right, WinForms.Keys.End, WinForms.Keys.Home, WinForms.Keys.Right })
+                        {
+                            Press(key);
+                            Expect(strip.Focused && !pages.Focused, "after " + key + " the keyboard is still on the names, not on the hidden control behind them");
+                        }
+                        var focusedTab = list.GetFocused();
+                        Expect(focusedTab != null && focusedTab.Name == pages.TabPages[pages.SelectedIndex].Text, "a screen reader is told that the open page's name has the focus");
+                        pages.Focus(); // however it got there, the control that holds the pages must hand the keyboard on when a page is chosen from the names
+                        list.GetChild(3).DoDefaultAction();
+                        Expect(pages.SelectedIndex == 3 && strip.Focused, "choosing a name from a screen reader leaves the keyboard on the names");
+                    }
+                    finally { Native.ShowWindow(handle, Native.SW_HIDE); }
+                }
+                return "six named tabs, one keyboard stop, arrow keys that keep the keyboard on the names";
+            });
+        }
+
+        /// <summary>Showing a Settings page used to set off a storm of layouts (seventy on the Printing page, over two seconds before it
+        /// appeared). Count the layouts and time the switch, on every page, the first time and when it is already built.</summary>
+        static Task<string> CheckSettingsSpeed(string dir)
+        {
+            return OnSta(() =>
+            {
+                var ini = Path.Combine(dir, "settings-speed-test.ini");
+                File.Delete(ini);
+                using (var form = new SettingsForm(new DragShift.Core.Settings(ini), Capabilities.All))
+                {
+                    form.StartPosition = WinForms.FormStartPosition.Manual;
+                    form.Location = new Point(-20000, -20000);
+                    form.ShowInTaskbar = false;
+                    var handle = form.Handle;
+                    Native.ShowWindow(handle, Native.SW_SHOWNOACTIVATE);
+                    WinForms.Application.DoEvents();
+                    try
+                    {
+                        var pages = form.Controls.OfType<WinForms.TabControl>().Single();
+                        int layouts = 0;
+                        foreach (var box in Descendants(form).OfType<WinForms.Panel>()) box.Layout += (s, e) => layouts++; // tables, flows, cards, panes, pages
+                        var clock = System.Diagnostics.Stopwatch.StartNew();
+                        int mostLayouts = 0;
+                        long slowest = 0;
+                        for (int round = 0; round < 2; round++)
+                            for (int i = 0; i < pages.TabCount; i++)
+                            {
+                                layouts = 0;
+                                clock.Restart();
+                                pages.SelectedIndex = i;
+                                WinForms.Application.DoEvents();
+                                long took = clock.ElapsedMilliseconds;
+                                Expect(layouts <= 12, "the " + pages.TabPages[i].Text + " page (round " + (round + 1) + ") set off " + layouts + " layouts");
+                                Expect(took < 1500, "the " + pages.TabPages[i].Text + " page (round " + (round + 1) + ") took " + took + " ms to show");
+                                mostLayouts = Math.Max(mostLayouts, layouts);
+                                slowest = Math.Max(slowest, took);
+                            }
+                        return "all 6 pages shown twice: at most " + mostLayouts + " layouts and " + slowest + " ms for one";
+                    }
+                    finally { Native.ShowWindow(handle, Native.SW_HIDE); }
+                }
+            });
+        }
+
+        /// <summary>The Settings window was rebuilt, so each setting in it is changed here the way a click would change it and read back from the
+        /// settings: it must save its own value, and putting the old value back must restore it. The two switches that act on Windows itself
+        /// (Start with Windows, Send to) are left alone: they change the real registry and Send to folder.</summary>
+        static Task<string> CheckSettingsWiring(string dir)
+        {
+            return OnSta(() =>
+            {
+                var ini = Path.Combine(dir, "settings-wiring-test.ini");
+                File.Delete(ini);
+                var settings = new DragShift.Core.Settings(ini); // its own file: the real settings are never touched
+                var onClick = typeof(WinForms.Control).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                int checks = 0;
+                using (var form = new SettingsForm(settings, Capabilities.All))
+                {
+                    Expect(form.Handle != IntPtr.Zero, "the window exists (the Favorites list saves through BeginInvoke, which needs it)");
+                    bool? hotkeyHeard = null;
+                    string shelfHeard = null;
+                    form.HotkeyChanged += on => hotkeyHeard = on;
+                    form.ShelfChanged += side => shelfHeard = side;
+                    var pages = form.Controls.OfType<WinForms.TabControl>().Single().TabPages.Cast<WinForms.TabPage>().ToDictionary(p => p.Text);
+                    WinForms.CheckBox Box(string page, string text) => Descendants(pages[page]).OfType<WinForms.CheckBox>().Single(b => b.Text == text);
+                    WinForms.ComboBox Combo(string page, object item) => Descendants(pages[page]).OfType<WinForms.ComboBox>().Single(c => c.Items.Contains(item));
+                    WinForms.Button Button(string page, string text) => Descendants(pages[page]).OfType<WinForms.Button>().Single(b => b.Text == text);
+                    void Press(WinForms.Control c) => onClick.Invoke(c, new object[] { EventArgs.Empty }); // a hidden window refuses PerformClick
+                    void Good(bool ok, string what) { Expect(ok, what); checks++; }
+
+                    // A tick box: it shows what is saved, ticking it saves the opposite, unticking it saves the first value again.
+                    void Flip(string page, string text, Func<bool> read, Func<bool, bool> told = null)
+                    {
+                        var box = Box(page, text);
+                        bool before = read();
+                        Good(box.Checked == before, page + ", \"" + text + "\": the box shows what is saved");
+                        box.Checked = !before;
+                        Good(read() == !before, page + ", \"" + text + "\": changing it is saved");
+                        if (told != null) Good(told(!before), page + ", \"" + text + "\": the running app is told");
+                        box.Checked = before;
+                        Good(read() == before, page + ", \"" + text + "\": putting it back is saved");
+                    }
+
+                    Flip("General", "Play a sound when a file is ready", () => settings.GetBool(Core.Settings.Keys.Sound, false));
+                    Flip("General", "Make what I pick most glow when the ring opens", () => settings.GetBool(Core.Settings.Keys.UsualGlow, true));
+                    Flip("General", "Put text it reads on the clipboard", () => settings.GetBool(Core.Settings.Keys.CopyText, true));
+                    Flip("General", "Show the new file in Explorer", () => settings.GetBool(Core.Settings.Keys.Reveal, false));
+
+                    Flip("Triggers", "Press Shift while dragging", () => settings.Shift);
+                    Flip("Triggers", "Tap one more finger on the touchpad", () => settings.Finger);
+                    Flip("Triggers", "Ctrl+Alt+V opens the clipboard in the ring", () => settings.GetBool(Core.Settings.Keys.Hotkey, true), on => hotkeyHeard == on);
+                    var shelf = Combo("Triggers", "Right edge");
+                    Good(shelf.SelectedIndex == 0 && settings.Get(Core.Settings.Keys.Shelf, "right") == "right", "Triggers: the shelf starts on the right edge");
+                    foreach (var pick in new[] { (Index: 1, Saved: "left"), (Index: 2, Saved: "off"), (Index: 0, Saved: "right") })
+                    {
+                        shelf.SelectedIndex = pick.Index;
+                        Good(settings.Get(Core.Settings.Keys.Shelf) == pick.Saved && shelfHeard == pick.Saved, "Triggers: the shelf choice '" + pick.Saved + "' is saved and the running app is told");
+                    }
+
+                    // Favorites: tick one, move, reset.
+                    var fav = Descendants(pages["Favorites"]).OfType<WinForms.CheckedListBox>().Single();
+                    var original = settings.Favorites.ToList();
+                    Good(fav.CheckedItems.Count == original.Count, "Favorites: the ticked ones are the saved favourites");
+                    int extra = Enumerable.Range(0, fav.Items.Count).First(i => !fav.GetItemChecked(i));
+                    fav.SetItemChecked(extra, true);
+                    WinForms.Application.DoEvents(); // the list saves a moment after the tick
+                    Good(settings.Favorites.Count == original.Count + 1 && original.All(settings.Favorites.Contains), "Favorites: ticking one adds it to the saved favourites");
+                    fav.SetItemChecked(extra, false);
+                    WinForms.Application.DoEvents();
+                    Good(settings.Favorites.SequenceEqual(original), "Favorites: unticking it takes it out again");
+                    fav.SelectedIndex = 1;
+                    Press(Button("Favorites", "Move up"));
+                    Good(settings.Favorites.Take(2).SequenceEqual(new[] { original[1], original[0] }), "Favorites: Move up puts the second one first");
+                    Press(Button("Favorites", "Move down"));
+                    Good(settings.Favorites.SequenceEqual(original), "Favorites: Move down puts it back");
+
+                    // Saving.
+                    var where = Combo("Saving", "Downloads");
+                    where.SelectedIndex = 1;
+                    Good(settings.Get(Core.Settings.Keys.OutputMode) == "downloads", "Saving: Downloads is saved");
+                    where.SelectedIndex = 0;
+                    Good(settings.Get(Core.Settings.Keys.OutputMode) == "beside", "Saving: Next to the original is saved"); // ("A folder I choose…" opens a dialog)
+                    var slider = Descendants(pages["Saving"]).OfType<WinForms.TrackBar>().Single();
+                    int quality = slider.Value;
+                    Good(Math.Abs(settings.Quality - quality / 100.0) < 1e-9, "Saving: the slider shows the saved JPG quality");
+                    slider.Value = 70;
+                    Good(Math.Abs(settings.Quality - 0.7) < 1e-9 && Descendants(pages["Saving"]).OfType<WinForms.Label>().Any(l => l.Text == "70"), "Saving: 70 on the slider is saved as 0.7 and shown as 70");
+                    slider.Value = quality;
+                    var size = Combo("Saving", PhotoSpec.Presets[0].Name);
+                    var limit = Combo("Saving", "No limit");
+                    var background = Combo("Saving", "Keep the original");
+                    int other = size.SelectedIndex == 1 ? 2 : 1;
+                    size.SelectedIndex = other;
+                    var wanted = PhotoSpec.Presets[other].Spec;
+                    Good(settings.Photo.WidthMM == wanted.WidthMM && settings.Photo.HeightMM == wanted.HeightMM, "Saving: the passport size is saved");
+                    limit.SelectedIndex = limit.Items.IndexOf("No limit");
+                    Good(settings.Photo.MaxKB == 0, "Saving: No limit is saved");
+                    background.SelectedIndex = background.Items.IndexOf("Light blue");
+                    Good(settings.Photo.Background == PhotoBackground.LightBlue, "Saving: the light blue background is saved");
+                    Good(settings.Photo.WidthMM == wanted.WidthMM && settings.Photo.MaxKB == 0, "Saving: changing one passport choice keeps the others");
+                    var watermark = Descendants(pages["Saving"]).OfType<WinForms.TextBox>().Single();
+                    watermark.Text = "© wiring test";
+                    Good(settings.Get(Core.Settings.Keys.Watermark) == "© wiring test", "Saving: the watermark text is saved");
+
+                    // Printing.
+                    var printing = pages["Printing"];
+                    var list = Descendants(printing).OfType<WinForms.ListBox>().Single();
+                    var name = Descendants(printing).OfType<WinForms.TextBox>().Single(t => t.GetType() == typeof(WinForms.TextBox)); // not the spin box's own
+                    var copies = Descendants(printing).OfType<WinForms.NumericUpDown>().Single();
+                    Good(list.Items.Count == settings.PrintPresets.Count && list.SelectedIndex == 0, "Printing: the list shows the saved presets, the first one picked");
+                    name.Text = "Everyday 2";
+                    Good(settings.PrintPresets[0].Name == "Everyday 2" && list.Items[0].ToString() == "Everyday 2", "Printing: a new name is saved and shows in the list");
+                    copies.Value = 3;
+                    Good(settings.PrintPresets[0].Copies == 3, "Printing: the number of copies is saved in the preset");
+                    Flip("Printing", "Print on both sides", () => settings.PrintPresets[0].TwoSided);
+                    Flip("Printing", "In the Print list and on the ring", () => !settings.Hidden.Contains(settings.PrintPresets[0].StepId));
+                    Flip("Printing", "★ In the ring's Favorites", () => settings.Favorites.Contains(settings.PrintPresets[0].StepId));
+                    int count = settings.PrintPresets.Count;
+                    Press(Button("Printing", "+"));
+                    Good(settings.PrintPresets.Count == count + 1 && list.Items.Count == count + 1 && list.SelectedIndex == count, "Printing: + adds a preset and picks it");
+                    Press(Button("Printing", "−"));
+                    Good(settings.PrintPresets.Count == count && list.Items.Count == count, "Printing: − takes the picked preset away");
+                    Flip("Printing", "Print straight away when I pick Print (uses the first preset shown, no window)", () => settings.GetBool(Core.Settings.Keys.PrintQuick, false));
+                    Press(Button("Printing", "Reset"));
+                    Good(settings.PrintPresets.Count == PrintPreset.BuiltIns.Length && settings.PrintPresets[0].Name == "Everyday" && settings.PrintPresets[0].Copies == 1, "Printing: Reset gives back the standard presets");
+
+                    // Last, because it closes the window.
+                    Press(Button("Favorites", "Reset"));
+                    Good(settings.Favorites.SequenceEqual(Catalog.DefaultFavorites), "Favorites: Reset gives back the standard favourites");
+                }
+                return checks + " things checked: every tick box, menu, slider and text box on General, Triggers, Favorites, Saving and Printing saves its own value and puts it back";
             });
         }
 
@@ -1283,6 +2341,47 @@ namespace DragShift
             });
         }
 
+        /// <summary>What is wrong with how one Settings page is laid out (an empty list means nothing). Call it while the window is shown.
+        /// A page is right when its column of cards is in the middle of it, every card has the same left edge and width, nothing sticks
+        /// out of the box it sits in, and it needs no scroll bar at the size the window opens at. On About every part is in the middle
+        /// of its column and the app's icon is there.</summary>
+        static List<string> SettingsLayoutProblems(WinForms.TabPage page)
+        {
+            var bad = new List<string>();
+            var pane = page.Controls.OfType<Pane>().SingleOrDefault();
+            if (pane == null) return new List<string> { "there is no page of cards" };
+            var column = pane.Column;
+            int off = column.Left + column.Width / 2 - pane.ClientSize.Width / 2;
+            if (Math.Abs(off) > 2) bad.Add("the column is " + off + " px off the middle");
+            int end = column.Bottom + column.Margin.Bottom;
+            if (end > pane.ClientSize.Height) bad.Add("it ends at " + end + " but the page is only " + pane.ClientSize.Height + " tall");
+            if (pane.VerticalScroll.Visible || pane.HorizontalScroll.Visible) bad.Add("a scroll bar shows");
+            var cards = column.Controls.OfType<Card>().ToList();
+            if (cards.Select(c => c.Left).Distinct().Count() > 1 || cards.Select(c => c.Width).Distinct().Count() > 1) bad.Add("the cards do not line up");
+            foreach (var c in Descendants(column).Where(c => c.Visible && c.Parent != null))
+            {
+                var box = c.Parent.ClientSize;
+                if (c.Left < -1 || c.Right > box.Width + 1 || c.Top < -1 || c.Bottom > box.Height + 1)
+                    bad.Add(c.GetType().Name + " \"" + (c.Text.Length > 24 ? c.Text.Substring(0, 24) : c.Text) + "\" sticks out of its " + c.Parent.GetType().Name);
+            }
+            if (page.Text == "About")
+            {
+                var about = column.Controls.OfType<WinForms.TableLayoutPanel>().FirstOrDefault(t => !(t is Card));
+                if (about == null) bad.Add("About has no column");
+                else
+                {
+                    foreach (var c in about.Controls.Cast<WinForms.Control>().Where(c => c.Visible))
+                    {
+                        int d = c.Left + c.Width / 2 - about.Width / 2;
+                        if (Math.Abs(d) > 2) bad.Add(c.GetType().Name + " \"" + c.Text + "\" is " + d + " px off the middle");
+                    }
+                    var icon = Descendants(about).OfType<IconView>().SingleOrDefault();
+                    if (icon == null || !icon.HasPicture) bad.Add("the app's icon is missing");
+                }
+            }
+            return bad;
+        }
+
         static Task<string> CheckWindows(string dir)
         {
             return OnSta(() =>
@@ -1311,16 +2410,20 @@ namespace DragShift
 
                     var tabs = form.Controls.OfType<WinForms.TabControl>().Single();
                     tabCount = tabs.TabPages.Count;
+                    var problems = new List<string>();
                     for (int i = 0; i < tabs.TabPages.Count; i++)
                     {
                         tabs.SelectedIndex = i;
-                        Picture(form, Path.Combine(dir, "settings-" + tabs.TabPages[i].Text.ToLowerInvariant() + ".png"));
+                        var page = tabs.TabPages[i];
+                        Picture(form, Path.Combine(dir, "settings-" + page.Text.ToLowerInvariant() + ".png"),
+                                () => problems.AddRange(SettingsLayoutProblems(page).Select(p => page.Text + ": " + p)));
                     }
+                    Expect(problems.Count == 0, "every Settings page is laid out properly: " + string.Join("; ", problems));
                 }
                 var practice = Path.Combine(dir, "Practice", "Try Me.png");
                 using (var welcome = new WelcomeForm(practice)) Picture(welcome, Path.Combine(dir, "welcome.png"));
                 Expect(File.Exists(practice), "the test practice picture stays in the test folder");
-                return tabCount + " Settings tabs and the Welcome window drawn";
+                return tabCount + " Settings tabs and the Welcome window drawn; each page centred, nothing sticking out of its box, nothing needing a scroll bar";
             });
         }
 

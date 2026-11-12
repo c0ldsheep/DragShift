@@ -25,6 +25,8 @@ namespace DragShift.Core
             /// <summary>How many files DragShift has made on this PC, for the About tab. It never leaves the PC.</summary>
             public const string Fixed = "files.fixed";
             public const string PrintPresets = "print.presets", PrintLast = "print.last", PrintQuick = "print.quick";
+            /// <summary>How Redact hides things: box (black bar), pixelate or blur. The same name the Mac keeps.</summary>
+            public const string RedactStyle = "redact.style";
         }
 
         readonly string path;
@@ -107,6 +109,13 @@ namespace DragShift.Core
         public HashSet<string> Hidden => new HashSet<string>(GetList(Keys.Hidden, new string[0]));
         public PhotoSpec Photo => PhotoSpec.Parse(Get(Keys.Photo, new PhotoSpec().ToString()));
         public double Quality => Num.Clamp(GetDouble(Keys.Quality, 0.85), 0.4, 1);
+
+        /// <summary>The way Redact hid things last time (the black bar the first time).</summary>
+        public RedactStyle RedactStyle
+        {
+            get => RedactStyles.Parse(Get(Keys.RedactStyle, ""));
+            set => Set(Keys.RedactStyle, value.Key());
+        }
 
         /// <summary>Adds or removes a favourite; true when it's now a favourite.</summary>
         public bool ToggleFavorite(string id)

@@ -3,7 +3,7 @@
 [← Back to the front page](../README.md)
 
 `windows/` is the same app for Windows 10 and 11: the same ring (same sizes and look), favourites shelf, recipes,
-repeat, "your usual" glow, clipboard shortcut (**Ctrl+Alt+V**), Under KB and Passport. It's one ~456 KB `DragShift.exe` built on
+repeat, "your usual" glow, clipboard shortcut (**Ctrl+Alt+V**), Under KB and Passport. It's one ~597 KB `DragShift.exe` built on
 .NET Framework 4.8, which every Windows 10 and 11 PC already has, so there's nothing to install. It never asks for
 admin rights.
 
@@ -17,15 +17,31 @@ admin rights.
 | Without dragging | Explorer → right-click → **Send to → DragShift**, the tray icon → Convert Files…, or Ctrl+Alt+V. |
 
 What's in it on Windows: pictures to JPG · PNG · WebP · HEIC (with the free Store extension) · TIFF · BMP · PDF ·
-Text (Windows' own OCR) · Under KB · Passport · Compress · Resize · Rotate · Flip · Watermark · Stitch · **Print** (same presets,
+Text (Windows' own OCR) · Under KB · Passport · Compress · Resize · Rotate · Flip · Watermark · Stitch · **Redact** · **Print** (same presets,
 Print page, Choose… and passport sheets as the Mac; pictures and PDFs. Windows keeps no shared list of saved printer
 presets the way macOS does, so the list is DragShift's own); PDF to JPG/PNG pages ·
-Text · Under KB · Compress; video and audio to MP4 · M4A · MP3 · WAV · Compress · Mute · Still; folders to Zip ·
-All → JPG · Images → PDF · Shrink All; zips Extract; Copy · Share (Windows' Share window) · Copy Path · Show.
-Not on Windows yet: Word/RTF documents; PDF merge, split, rotate, lock, unlock and searchable; Crop, Cut Out, Add BG,
-Enhance, Shop Photo, Clean Info, Redact, Annotate and Make GIF; Translate and QR codes; Rename; watch folders; video
+Text · Under KB · Compress · **Merge** · **Unlock**; video and audio to MP4 · M4A · MP3 · WAV · Compress · Mute · Still; folders to Zip ·
+All → JPG · Images → PDF · Shrink All; pictures and PDFs together → **One PDF**; zips Extract; Copy · Share (Windows' Share window) · Copy Path · Show.
+Not on Windows yet: Word/RTF documents; PDF split, rotate, lock and searchable; Crop, Cut Out, Add BG,
+Enhance, Shop Photo, Clean Info, Annotate and Make GIF; Translate and QR codes; Rename; watch folders; video
 trimming, speed and reel crops. On Windows the passport background is changed when it's a plain wall (there's
 no built-in "lift the subject" like on the Mac); a busy background is kept and the bubble says so.
+
+**Merge, Unlock and Redact** work like the Mac's, with these differences:
+
+- **Merge** (PDF → Edit, when you drag more than one file) and **One PDF** (pictures and PDFs together) join the files in
+  Explorer's name order into `<first file's name> Merged.pdf`, beside the first file. Each page keeps its size.
+  **Unlock** asks for the password in a small window (a wrong one says so and lets you try again) and saves
+  `<name> Unlocked.pdf`, a copy that opens without one. Windows can draw the pages of a PDF but cannot copy their text,
+  and DragShift uses no extra PDF code, so **Merge and Unlock save the pages as pictures and their text can't be
+  selected**; the bubble says so each time. A password-protected PDF in a Merge stops it with "Use Unlock first."
+- **Redact** (pictures, one at a time) shows the picture with a box over every email address, phone number, ID or card
+  number that Windows' own text reader finds, and over faces (**Find faces too** starts ticked). Click a box to switch it
+  off, drag to add your own, choose Black bar, Pixelate or Blur, then **Save Redacted** writes
+  `<name> Redacted.<same type>` with the covered pixels really replaced. **It doesn't look for street addresses**: draw a
+  box over one by hand. Windows' text reader can mix up look-alike letters and digits, so an ID such as a PAN or IFSC
+  code is sometimes missed: draw a box over it too. If this PC has no text reader, the window says so and you draw the
+  boxes yourself.
 
 ```sh
 ./windows/build.sh                  # tests the shared logic, then builds build/windows/DragShift.exe (macOS, Linux or Windows)
@@ -47,4 +63,4 @@ or video is in front). The ring then appears, almost invisible, under the pointe
 is really being dragged, so text selections and window moves never open it. While a ring is pinned it never takes
 the keyboard focus from the app you're in. Code: `windows/src/Core` (shared logic, tested with `windows/tests`),
 `windows/src/DragShift` (`DragTracker`, `Touchpad`, `RingForm` + `RingPainter`, `ShelfForm`, `Hud`, `AppMain`,
-`Engine/`).
+`PasswordForm`, `RedactForm`, `Engine/`).
