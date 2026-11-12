@@ -78,14 +78,62 @@ public enum PassportPhoto {
         return CGRect(x: b.minX * W, y: (1 - b.maxY) * H, width: b.width * W, height: b.height * H)
     }
 
+    /// A line farther above the brows than this isn't hair: it's a shelf, a picture frame or a doorway.
+    static let maxCrownAbove = 1.2
+
     /// The part of the picture that becomes the photo (pixels, top-left origin). It can reach past
     /// the picture's edges; that part is filled with the background colour.
-    public static func frame(face f: CGRect, spec: PhotoSpec) -> CGRect {
-        let crown = f.minY - f.height * crownAbove
+    /// `measuredCrown` is where the hair really ends (see `crown(in:face:)`). Only a higher line than the usual guess
+    /// counts (tall hair, a turban, a hat); a lower one never takes away room above the head.
+    public static func frame(face f: CGRect, spec: PhotoSpec, measuredCrown: Double? = nil) -> CGRect {
+        var crown = f.minY - f.height * crownAbove
+        if let m = measuredCrown, !m.isNaN, m < crown { crown = max(m, f.minY - f.height * maxCrownAbove) }
         let head = f.maxY - crown
         let h = head / spec.head
         let w = h * spec.widthMM / spec.heightMM
         return CGRect(x: f.midX - w / 2, y: crown - h * topShare(spec), width: w, height: h)
+    }
+
+    /// The top of the hair: the highest row of the person's cut-out that is joined to the face. It walks up from
+    /// the brows row by row and stops at the first real gap, so a poster or a shelf above the head doesn't count.
+    /// `face` is in the mask's own pixels (top-left origin). nil when the cut-out doesn't cover the face.
+    static func crown(in mask: VisionOps.Mask, face f: CGRect) -> Double? {
+        guard mask.width > 0, mask.height > 0, f.width >= 4, f.height >= 4 else { return nil }
+        let x0 = max(0, Int(f.minX - f.width * 0.6)), x1 = min(mask.width, Int(f.maxX + f.width * 0.6))
+        let run = max(2, Int(f.width * 0.08))        // thinner than this is a stray hair, a finger, an edge
+        let gap = max(1, Int(f.height * 0.03))       // a shine in the hair may break the cut-out for a row or two
+        func solid(_ y: Int) -> Bool {
+            var n = 0
+            for x in x0..<x1 {
+                n = mask.alpha[y * mask.width + x] >= 128 ? n + 1 : 0
+                if n >= run { return true }
+            }
+            return false
+        }
+        let start = min(mask.height - 1, Int(f.minY + f.height * 0.15))
+        guard x1 - x0 >= run, start >= 0, solid(start) else { return nil }
+        var top = start, missing = 0, y = start - 1
+        while y >= 0 && missing <= gap {
+            if solid(y) { top = y; missing = 0 } else { missing += 1 }
+            y -= 1
+        }
+        return Double(top)
+    }
+
+    /// Where the hair ends in `img` (pixels, top-left origin), read from the person's cut-out on a small copy.
+    @available(macOS 14, *)
+    static func measuredCrown(_ img: CGImage, face f: CGRect) -> Double? {
+        let k = min(1, 1024 / Double(max(img.width, img.height)))
+        let small = k < 1 ? ImageOps.scaled(img, to: CGSize(width: Double(img.width) * k, height: Double(img.height) * k)) : img
+        let kx = Double(small.width) / Double(img.width), ky = Double(small.height) / Double(img.height)
+        let face = CGRect(x: f.minX * kx, y: f.minY * ky, width: f.width * kx, height: f.height * ky)
+        guard let mask = try? VisionOps.subjectMask(small, at: CGPoint(x: face.midX, y: face.midY)),
+              let row = crown(in: mask, face: CGRect(x: face.minX * Double(mask.width) / Double(small.width),
+                                                     y: face.minY * Double(mask.height) / Double(small.height),
+                                                     width: face.width * Double(mask.width) / Double(small.width),
+                                                     height: face.height * Double(mask.height) / Double(small.height)))
+        else { return nil }
+        return row * Double(small.height) / Double(mask.height) / ky
     }
 
     public struct Result {
@@ -95,10 +143,12 @@ public enum PassportPhoto {
     }
 
     /// Crops around the face to the spec's shape and size, and puts the person on the chosen colour.
-    /// `face` is for tests; normally it's found with Vision.
-    public static func make(_ img: CGImage, spec: PhotoSpec, face known: CGRect? = nil) throws -> Result {
+    /// `face` and `crown` are for tests; normally the face is found with Vision and the top of the hair is measured.
+    public static func make(_ img: CGImage, spec: PhotoSpec, face known: CGRect? = nil, crown knownCrown: Double? = nil) throws -> Result {
         let f = try known ?? face(in: img)
-        let frame = frame(face: f, spec: spec)
+        var crown = knownCrown
+        if known == nil, #available(macOS 14, *) { crown = measuredCrown(img, face: f) }
+        let frame = frame(face: f, spec: spec, measuredCrown: crown)
         let bounds = CGRect(x: 0, y: 0, width: img.width, height: img.height)
         let visible = frame.intersection(bounds).integral
         guard visible.width >= 8, visible.height >= 8, var part = img.cropping(to: visible) else {

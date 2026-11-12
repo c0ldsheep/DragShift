@@ -62,10 +62,23 @@ private struct GeneralPane: View {
     }
 }
 
+extension TriggersPane {
+    /// One tick of "Buttons that open the ring".
+    func button(_ b: MouseButtons) -> Binding<Bool> {
+        Binding(get: { MouseButtons(saved: mouseButtons).contains(b) },
+                set: { on in
+                    var chosen = MouseButtons(saved: mouseButtons)
+                    if on { chosen.insert(b) } else { chosen.remove(b) }
+                    mouseButtons = chosen.saved
+                })
+    }
+}
+
 struct TriggersPane: View {
     @AppStorage(Key.triggerShift) private var shift = true
     @AppStorage(Key.triggerFinger) private var finger = true
     @AppStorage(Key.triggerMouse) private var mouse = true
+    @AppStorage(Key.triggerMouseButtons) private var mouseButtons: String?
     @AppStorage(Key.triggerShake) private var shake = false
     @AppStorage(Key.triggerHover) private var hover = false
     @AppStorage(Key.palm) private var palm = true
@@ -95,6 +108,17 @@ struct TriggersPane: View {
                         Text("Click the mouse wheel while dragging")
                         Text("For mice: hold the file with the left button, click the wheel (or a side button). Shift works with a mouse too.")
                             .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if mouse {
+                    // The ticks stay as they are while the switch above is off.
+                    LabeledContent("Buttons that open the ring") {
+                        HStack(spacing: 14) {
+                            Toggle("Wheel", isOn: button(.middle))
+                            Toggle("Back", isOn: button(.back))
+                            Toggle("Forward", isOn: button(.forward))
+                        }
+                        .toggleStyle(.checkbox)
                     }
                 }
                 Toggle(isOn: $shake) {

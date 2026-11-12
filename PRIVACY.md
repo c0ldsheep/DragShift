@@ -18,9 +18,10 @@ no analytics, no ads, no cookies and no trackers.
   - a practice picture
   - a count of how many files DragShift has made for you (just a number, shown in the About tab)
 
-- On Windows, clipboard pictures use temporary local copies. Finishing an action, cancelling or quitting removes
-  those copies. If Windows is still using one while the app quits, the next start removes it. Copy, Copy Path,
-  Show and Share save a lasting copy in Downloads so the file still works afterwards.
+- A copied screenshot (and, on a Mac, a picture dragged out of a browser, Mail or Photos) is worked on from a
+  temporary local copy. Finishing an action, cancelling, closing its window or quitting removes the copy. If one is
+  still in use while the app quits, or the app crashed, the next start removes it. Copy, Copy Path and Share (and
+  Show on Windows) save a lasting copy in Downloads so the file still works afterwards.
 
   These never leave your computer. To remove them, delete the app and those files.
 - Passwords you type to lock or unlock a PDF are used once, in memory, and are never saved or logged.

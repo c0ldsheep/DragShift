@@ -79,6 +79,12 @@ or money).
   decoded. Pictures over 250 megapixels are refused with a plain message, before any pixels are decoded: on the Mac
   (`ImageOps.maxPixels`, tested with that very file) and on Windows (`Images.MaxPixels`, in the self-test). macOS
   itself already rejects files whose header lies about the size (tested).
+- **PDF pages with broken or giant sizes (fixed 2026-11-12):** a PDF can claim any page size in a few bytes. A page
+  whose size isn't a real number is skipped, and one that would need more than 250 megapixels at the chosen
+  sharpness is refused with a plain message before any memory is asked for (Mac: `PDFOps.pixels`, tested with a
+  200 × 200 inch page; Windows: `Images.RequireSafeSize`).
+- **Nothing half-made (2026-11-12):** unzip builds its folder under a hidden name and gives it the real name in one
+  move, and Cancel stops the encoder or tool and removes what it was writing (tested on both systems).
 - **Text reading on any Mac:** when macOS's accurate text recognizer isn't available (seen running as Intel under
   Rosetta), the fast one is used instead of showing a raw system error.
 - **Watch folders (Mac):** these convert new files automatically using Apple's own image and PDF readers, the same

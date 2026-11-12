@@ -7,6 +7,12 @@ import SwiftUI
 enum Windows {
     private static var open: [String: NSWindow] = [:]
     private static var delegates: [String: CloseWatcher] = [:]
+    private static var closers: [String: [() -> Void]] = [:]
+
+    /// Runs `body` once, when the window `id` closes (now, if it isn't open).
+    static func whenClosed(_ id: String, _ body: @escaping () -> Void) {
+        if open[id] == nil { body() } else { closers[id, default: []].append(body) }
+    }
 
     @discardableResult
     static func show<V: View>(_ id: String, title: String, size: CGSize, resizable: Bool = false, _ view: V) -> NSWindow {
@@ -21,7 +27,12 @@ enum Windows {
         w.setContentSize(size)
         w.center()
         w.level = .floating
-        let watcher = CloseWatcher { open[id] = nil; delegates[id] = nil }
+        let watcher = CloseWatcher {
+            open[id] = nil
+            delegates[id] = nil
+            let waiting = closers.removeValue(forKey: id) ?? []
+            waiting.forEach { $0() }
+        }
         w.delegate = watcher
         delegates[id] = watcher
         open[id] = w
@@ -53,8 +64,24 @@ final class CloseWatcher: NSObject, NSWindowDelegate {
 
 @MainActor
 enum Editors {
-    static func open(_ editor: Action.Editor, action: Action, files: [URL], temporary: Bool) {
+    /// `closed` runs when the editor's window has closed (used to let go of a temporary copy).
+    static func open(_ editor: Action.Editor, action: Action, files: [URL], temporary: Bool, closed: (() -> Void)? = nil) {
         let options = Prefs.options(temporary: temporary)
+        let id: String
+        switch editor {
+        case .crop: id = "crop"
+        case .backdrop: id = "backdrop"
+        case .redact: id = "redact"
+        case .resize: id = "resize"
+        case .lockPDF, .unlockPDF: id = "password"
+        case .annotate: id = "annotate"
+        case .rename: id = "rename"
+        case .translate: id = "translate"
+        case .fitKB: id = "fit"
+        case .print: id = "print"
+        case .trim: id = "trim"
+        }
+        defer { if let closed { Windows.whenClosed(id, closed) } }
         switch editor {
         case .crop:
             Windows.show("crop", title: "Crop", size: CGSize(width: 640, height: 640),
@@ -85,6 +112,7 @@ enum Editors {
         case .print:
             // "Print right away" skips the window and uses the top preset.
             if Prefs.d.bool(forKey: Key.printQuick), let first = Prefs.shownPrintPresets.first {
+                Windows.close("print") // an older print window would otherwise decide when this file is let go
                 Runner.shared.perform(first.action, files, at: NSEvent.mouseLocation, temporary: temporary)
             } else {
                 Windows.show("print", title: "Print", size: PrintSheet.quickSize(rows: PrintSheet.quickRows),
@@ -102,13 +130,22 @@ enum Editors {
     }
 
     static func workAsync(_ title: String, count: Int, close id: String, _ body: @escaping @Sendable () async throws -> [URL]) {
+        // The window closes before its work starts: a temporary copy it was showing stays until the work is done.
+        let resume = InboxLeases.shared.pause()
         Windows.close(id)
         let point = NSEvent.mouseLocation
+        let (job, token) = Runner.shared.startJob()
         HUD.shared.begin(title, count: count, near: point)
         Task {
             var report = RunReport()
-            do { report.outputs = try await body() } catch { report.failures.append(error.localizedDescription) }
-            Runner.shared.finish(report, title: title)
+            do {
+                report.outputs = try await CancelToken.$current.withValue(token) { try await body() }
+            } catch is Cancelled {
+            } catch {
+                report.failures.append(error.localizedDescription)
+            }
+            Runner.shared.finish(report, title: title, job: job)
+            resume()
         }
     }
 }

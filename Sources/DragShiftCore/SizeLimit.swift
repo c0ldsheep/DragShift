@@ -142,7 +142,8 @@ public enum SizeLimit {
             var totals = [Int](repeating: overhead, count: ladder.count)
             var datas = [[PDFWriter.Page]](repeating: [], count: ladder.count)
             for (pi, page) in pages.enumerated() {
-                guard let img = PDFOps.render(page, dpi: dpi) else { throw DragShiftError("Couldn't read page \(pi + 1).") }
+                try CancelToken.check()
+                guard let img = try PDFOps.render(page, dpi: dpi) else { throw DragShiftError("Couldn't read page \(pi + 1).") }
                 let pixels = isGray(img) ? try gray(img) : img
                 let size = CGSize(width: Double(img.width) * 72 / dpi, height: Double(img.height) * 72 / dpi)
                 for (li, q) in ladder.enumerated() where totals[li] <= limit {

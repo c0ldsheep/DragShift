@@ -82,6 +82,13 @@ final class RingController {
     private var urls: [URL] = []
     private var catalogURLs: [URL] = []
     private var temporary = false
+    /// While the ring shows a temporary copy (a pasted screenshot, a picture from a web page), the copy is kept.
+    private var lease: (() -> Void)?
+    private func keepWhileShown(_ files: [URL], temporary: Bool) {
+        let old = lease
+        lease = temporary ? Incoming.hold(files) : nil
+        old?()
+    }
     private var anchor = NSPoint.zero
     private var springTimer: Timer?
     private var hideWork: DispatchWorkItem?
@@ -143,6 +150,7 @@ final class RingController {
     func showForDrag(_ peek: Incoming.Peek, at point: NSPoint) {
         urls = peek.urls
         temporary = peek.urls.isEmpty
+        keepWhileShown([], temporary: false)
         dropHandled = false
         configure(peek.catalogURLs, mode: .drag)
         place(at: point)
@@ -152,6 +160,7 @@ final class RingController {
     func showForClick(_ files: [URL], temporary: Bool = false, at point: NSPoint) {
         urls = files
         self.temporary = temporary
+        keepWhileShown(files, temporary: temporary)
         configure(files, mode: .click)
         place(at: point)
         takeFocus()
@@ -163,6 +172,7 @@ final class RingController {
         guard !files.isEmpty else { hide(); return }
         urls = files
         self.temporary = temporary
+        keepWhileShown(files, temporary: temporary)
         model.mode = .pinned
         model.hovered = nil
         if !model.visible { model.visible = true }
@@ -276,6 +286,8 @@ final class RingController {
     }
 
     func hide(restoreFocus: Bool = false) {
+        // Closed without a pick: the temporary copy goes. After a pick the action holds it until it has finished.
+        keepWhileShown([], temporary: false)
         springTimer?.invalidate()
         if let m = clickMonitor { NSEvent.removeMonitor(m); clickMonitor = nil }
         if restoreFocus, let app = previousApp { app.activate() }

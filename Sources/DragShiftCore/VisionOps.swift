@@ -78,6 +78,59 @@ public enum VisionOps {
         return out
     }
 
+    /// A cut-out as plain numbers: `alpha[y * width + x]`, 0 (background) to 255 (subject), top row first.
+    public struct Mask: Sendable {
+        public let width: Int, height: Int
+        public let alpha: [UInt8]
+        public init(width: Int, height: Int, alpha: [UInt8]) { self.width = width; self.height = height; self.alpha = alpha }
+    }
+
+    /// The cut-out of the one subject under `point` (pixels, top-left origin): for a portrait, the person and
+    /// their hair, without a poster or a lamp that Vision also sees as a subject.
+    @available(macOS 14, *)
+    public static func subjectMask(_ img: CGImage, at point: CGPoint) throws -> Mask {
+        let req = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: img, options: [:])
+        try handler.perform([req])
+        guard let result = req.results?.first, !result.allInstances.isEmpty else {
+            throw DragShiftError("Couldn't find a clear subject in this photo.")
+        }
+        // Which subject is at the point: the instance mask holds one small number per pixel (0 = background).
+        let labels = result.instanceMask
+        CVPixelBufferLockBaseAddress(labels, .readOnly)
+        var label = 0
+        if let base = CVPixelBufferGetBaseAddress(labels), CVPixelBufferGetPixelFormatType(labels) == kCVPixelFormatType_OneComponent8 {
+            let lw = CVPixelBufferGetWidth(labels), lh = CVPixelBufferGetHeight(labels)
+            let x = min(lw - 1, max(0, Int(point.x * Double(lw) / Double(img.width))))
+            let y = min(lh - 1, max(0, Int(point.y * Double(lh) / Double(img.height))))
+            label = Int(base.load(fromByteOffset: y * CVPixelBufferGetBytesPerRow(labels) + x, as: UInt8.self))
+        }
+        CVPixelBufferUnlockBaseAddress(labels, .readOnly)
+        guard label > 0 else { throw DragShiftError("Couldn't find a clear subject in this photo.") }
+
+        let buf = try result.generateScaledMaskForImage(forInstances: IndexSet(integer: label), from: handler)
+        CVPixelBufferLockBaseAddress(buf, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buf, .readOnly) }
+        let w = CVPixelBufferGetWidth(buf), h = CVPixelBufferGetHeight(buf), stride = CVPixelBufferGetBytesPerRow(buf)
+        guard let base = CVPixelBufferGetBaseAddress(buf), w > 0, h > 0 else { throw DragShiftError("Couldn't build the cut-out image.") }
+        var alpha = [UInt8](repeating: 0, count: w * h)
+        switch CVPixelBufferGetPixelFormatType(buf) {
+        case kCVPixelFormatType_OneComponent32Float:
+            for y in 0..<h {
+                let row = (base + y * stride).assumingMemoryBound(to: Float32.self)
+                for x in 0..<w { let v = row[x]; alpha[y * w + x] = v.isFinite ? UInt8(max(0, min(255, v * 255))) : 0 }
+            }
+        case kCVPixelFormatType_OneComponent8:
+            for y in 0..<h {
+                let row = (base + y * stride).assumingMemoryBound(to: UInt8.self)
+                for x in 0..<w { alpha[y * w + x] = row[x] }
+            }
+        default:
+            throw DragShiftError("Couldn't build the cut-out image.")
+        }
+        return Mask(width: w, height: h, alpha: alpha)
+    }
+
     /// Marketplace-ready product photo: background removed, subject centred on pure white,
     /// filling about 85% of a square (what Amazon and Flipkart ask for).
     @available(macOS 14, *)

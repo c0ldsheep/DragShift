@@ -87,6 +87,57 @@ public enum Naming {
     }
 }
 
+/// What a job throws when the person pressed Cancel.
+public struct Cancelled: LocalizedError, Sendable {
+    public init() {}
+    public var errorDescription: String? { "Cancelled" }
+}
+
+/// The Cancel button for one job. The app makes one, runs the job with it as `CancelToken.current`, and calls
+/// `cancel()` when the person presses Cancel: a tool that is running is stopped, a video export is stopped, and the
+/// long loops (pages, files, frames) stop at their next step. Anything half-written is removed where it was made.
+public final class CancelToken: @unchecked Sendable {
+    @TaskLocal public static var current: CancelToken?
+
+    private let lock = NSLock()
+    private var cancelled = false
+    private var stoppers: [UUID: () -> Void] = [:]
+
+    public init() {}
+
+    public var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+
+    public func cancel() {
+        lock.lock()
+        cancelled = true
+        let stop = Array(stoppers.values)
+        lock.unlock()
+        stop.forEach { $0() }
+    }
+
+    /// Something that is running now and can be stopped. Call what comes back when it has ended.
+    public func whileRunning(_ stop: @escaping () -> Void) -> () -> Void {
+        let id = UUID()
+        lock.lock()
+        let already = cancelled
+        if !already { stoppers[id] = stop }
+        lock.unlock()
+        if already { stop() }
+        return { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); self.stoppers[id] = nil; self.lock.unlock()
+        }
+    }
+
+    /// For loops: throws once this job has been cancelled.
+    public static func check() throws {
+        if current?.isCancelled == true { throw Cancelled() }
+    }
+}
+
 /// Runs a system or Homebrew tool with arguments (never through a shell).
 public enum Shell {
     @discardableResult
@@ -97,7 +148,11 @@ public enum Shell {
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err
+        try CancelToken.check()
         try p.run()
+        let token = CancelToken.current
+        let ended = token?.whileRunning { p.terminate() }
+        defer { ended?() }
         // Drain stderr on a private queue (always gets its own thread) so a chatty tool
         // can't fill the pipe and stall.
         var errData = Data()
@@ -110,6 +165,7 @@ public enum Shell {
         let outData = out.fileHandleForReading.readDataToEndOfFile()
         group.wait()
         p.waitUntilExit()
+        if token?.isCancelled == true { throw Cancelled() }
         guard p.terminationStatus == 0 else {
             let msg = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             throw DragShiftError("\(tool.lastPathComponent) failed: \(msg.suffix(300))")

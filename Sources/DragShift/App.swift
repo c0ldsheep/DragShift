@@ -10,6 +10,7 @@ final class App: NSObject, NSApplicationDelegate {
     private let status = StatusBar()
     private let demo = RingModel()
     private var demoTimer: Timer?
+    private var isTheOnlyCopy = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Prefs.registerDefaults()
@@ -25,6 +26,16 @@ final class App: NSObject, NSApplicationDelegate {
             let r = Snapshots.cupDragCheck()
             print(r.text)
             exit(r.ok ? 0 : 1)
+        }
+        // Developer check: `DragShift --inbox-check` walks a temporary copy through its whole life (held, let go,
+        // swept) in a folder of its own.
+        if CommandLine.arguments.contains("--inbox-check") {
+            Task { @MainActor in
+                let r = await Incoming.selfCheck()
+                print(r.text)
+                exit(r.ok ? 0 : 1)
+            }
+            return
         }
         // Developer check: `DragShift --print-test <out.pdf> <preset id> <files…>` runs a real print job through macOS
         // printing, saved to a PDF instead of sent to a printer.
@@ -77,6 +88,12 @@ final class App: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        // Temporary copies left by a crash or a force quit: nothing is using them now.
+        isTheOnlyCopy = true
+        Incoming.sweepAll()
+        let sweep = Timer(timeInterval: 3600, repeats: true) { _ in Task { @MainActor in Incoming.sweepOld() } }
+        sweep.tolerance = 600
+        RunLoop.main.add(sweep, forMode: .common)
 
         status.setup()
         status.onConvertFiles = { [weak self] in self?.chooseFiles() }
@@ -226,6 +243,12 @@ final class App: NSObject, NSApplicationDelegate {
     @objc func openInRing(_ pboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
         let urls = (pboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         if !urls.isEmpty { showRing(urls) }
+    }
+
+    /// Quit: no temporary copy stays behind. (A second copy of the app that quits itself at launch must not
+    /// remove the files the first one is using.)
+    func applicationWillTerminate(_ notification: Notification) {
+        if isTheOnlyCopy { Incoming.sweepAll() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

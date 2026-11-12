@@ -49,17 +49,27 @@ public enum MediaOps {
             }
         }
         defer { ticker.cancel() }
-        try await Naming.atomically(url) { tmp in
-            if #available(macOS 15, *) {
-                try await session.export(to: tmp, as: type)
-            } else {
-                session.outputURL = tmp
-                session.outputFileType = type
-                await session.export()
-                if session.status != .completed {
-                    throw session.error ?? DragShiftError("Export failed.")
+        // Cancel stops the encoder itself; the half-written file is the hidden temp one, removed by `atomically`.
+        let token = CancelToken.current
+        try CancelToken.check()
+        let ended = token?.whileRunning { session.cancelExport() }
+        defer { ended?() }
+        do {
+            try await Naming.atomically(url) { tmp in
+                if #available(macOS 15, *) {
+                    try await session.export(to: tmp, as: type)
+                } else {
+                    session.outputURL = tmp
+                    session.outputFileType = type
+                    await session.export()
+                    if session.status != .completed {
+                        throw session.error ?? DragShiftError("Export failed.")
+                    }
                 }
+                if token?.isCancelled == true { throw Cancelled() }
             }
+        } catch {
+            throw token?.isCancelled == true ? Cancelled() : error
         }
     }
 
@@ -188,6 +198,7 @@ public enum MediaOps {
         let times = stride(from: 0.0, to: total, by: 1 / fps).map { CMTime(seconds: $0, preferredTimescale: 600) }
         var frames: [CGImage] = []
         for await result in gen.images(for: times) {
+            try CancelToken.check()
             if case .success(_, let image, _) = result { frames.append(image) }
             progress?(Double(frames.count) / Double(times.count) * 0.9)
         }

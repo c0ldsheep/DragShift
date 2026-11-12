@@ -95,7 +95,7 @@ private func pixel(_ img: CGImage, _ x: Int, _ y: Int) -> (Int, Int, Int) {
         #expect(doc.pageCount == 2)
         #expect(doc.page(at: 1)?.bounds(for: .mediaBox).size == CGSize(width: 200, height: 84))
         let page = try #require(doc.page(at: 0))
-        let img = try #require(PDFOps.render(page, dpi: 72))
+        let img = try #require(try PDFOps.render(page, dpi: 72))
         let (r, _, b) = pixel(img, 50, 200)
         #expect(r > 180 && b < 90, "left half is red")
     }

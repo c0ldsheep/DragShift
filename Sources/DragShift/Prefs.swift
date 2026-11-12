@@ -33,6 +33,7 @@ enum Key {
     static let lastActions = "last.actions"     // [kind: action id]
     static let palm = "trigger.palm"
     static let triggerMouse = "trigger.mouse"   // middle or side mouse button while dragging
+    static let triggerMouseButtons = "trigger.mouse.buttons" // which ones: "middle,back,forward" (nothing saved = all)
     static let fitLast = "fit.last"             // last "Under ___ KB" size
     static let photo = "photo.spec"             // passport photo size, KB limit, background
     static let habits = "habits"                 // what you pick most per kind (Habits, JSON)

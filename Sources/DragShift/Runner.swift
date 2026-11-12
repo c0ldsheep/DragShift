@@ -19,57 +19,76 @@ final class Runner {
     var canUndo: Bool { undoStep != nil }
     private var job = 0
     private var cancelled: Set<Int> = []
+    private var tokens: [Int: CancelToken] = [:]
 
     private init() {
         HUD.shared.onUndo = { [weak self] in self?.undo() }
         HUD.shared.onCancel = { [weak self] in
             guard let self else { return }
             self.cancelled.insert(self.job)
+            self.tokens[self.job]?.cancel() // stops the encoder or the tool; nothing half-made is left
             HUD.shared.flash("Cancelled", "Anything already made goes to the Bin", near: NSEvent.mouseLocation)
         }
+    }
+
+    /// A new job with its own Cancel button. Run the work with `CancelToken.$current.withValue(token)` and end with
+    /// `finish(_:title:job:)`.
+    func startJob() -> (id: Int, token: CancelToken) {
+        job += 1
+        let token = CancelToken()
+        tokens[job] = token
+        return (job, token)
     }
 
     func perform(_ action: Action, _ files: [URL], at point: NSPoint, temporary: Bool) {
         Log.line("run: \(action.id) on \(files.count) file(s)")
         Live.shared.lastAction = action.id
         Prefs.setLastAction(action.id, for: FileInspector.kind(of: files))
+        // A copied screenshot or a picture dragged from a web page or Photos is a temporary copy the app made.
+        // It is kept until this action has finished with it, then deleted.
+        let release = temporary ? Incoming.hold(files) : {}
         if let preset = Prefs.printPreset(step: action.id) {
-            Printer.run(files, preset: preset, at: point)
+            Printer.run(files, preset: preset, at: point) { _ in release() }
         } else if action.isRecipe {
-            guard let recipe = Prefs.recipes.first(where: { $0.id == action.id }) else { return }
-            runRecipe(recipe, files, at: point, temporary: temporary)
+            guard let recipe = Prefs.recipes.first(where: { $0.id == action.id }) else { release(); return }
+            runRecipe(recipe, files, at: point, temporary: temporary, done: release)
         } else if action.isShare {
             share(action, files, at: point)
+            release()
         } else if let editor = action.editor {
-            Editors.open(editor, action: action, files: files, temporary: temporary)
+            Editors.open(editor, action: action, files: files, temporary: temporary, closed: release)
         } else {
-            run(action, files, at: point, temporary: temporary)
+            run(action, files, at: point, temporary: temporary, done: release)
         }
     }
 
-    func run(_ action: Action, _ files: [URL], at point: NSPoint, temporary: Bool) {
-        job += 1
-        let id = job
+    func run(_ action: Action, _ files: [URL], at point: NSPoint, temporary: Bool, done: (() -> Void)? = nil) {
+        let (id, token) = startJob()
         HUD.shared.begin(action.verb, count: files.count, near: point)
         let options = Prefs.options(temporary: temporary)
         Task {
-            let report = await Engine.run(action, inputs: files, options: options) { done, total, frac in
-                Task { @MainActor in if self.job == id { HUD.shared.update(done: done, total: total, fraction: frac) } }
+            let report = await CancelToken.$current.withValue(token) {
+                await Engine.run(action, inputs: files, options: options) { done, total, frac in
+                    Task { @MainActor in if self.job == id { HUD.shared.update(done: done, total: total, fraction: frac) } }
+                }
             }
             self.finish(report, title: action.verb, job: id)
+            done?()
         }
     }
 
-    func runRecipe(_ recipe: Recipe, _ files: [URL], at point: NSPoint, temporary: Bool) {
-        job += 1
-        let id = job
+    func runRecipe(_ recipe: Recipe, _ files: [URL], at point: NSPoint, temporary: Bool, done: (() -> Void)? = nil) {
+        let (id, token) = startJob()
         HUD.shared.begin(recipe.name, count: files.count, near: point)
         let options = Prefs.options(temporary: temporary)
         Task {
-            let report = await Engine.runRecipe(recipe, inputs: files, options: options) { done, total, frac in
-                Task { @MainActor in if self.job == id { HUD.shared.update(done: done, total: total, fraction: frac) } }
+            let report = await CancelToken.$current.withValue(token) {
+                await Engine.runRecipe(recipe, inputs: files, options: options) { done, total, frac in
+                    Task { @MainActor in if self.job == id { HUD.shared.update(done: done, total: total, fraction: frac) } }
+                }
             }
             self.finish(report, title: recipe.name, job: id)
+            done?()
         }
     }
 
@@ -84,7 +103,10 @@ final class Runner {
 
     /// Editors and the engine both end here.
     func finish(_ report: RunReport, title: String, job id: Int? = nil) {
+        if let id { tokens[id] = nil }
         if let id, cancelled.contains(id) {
+            // The file being made when Cancel was pressed was never finished, so there's nothing of it to remove.
+            // Files finished before that (earlier ones in a batch) go to the Bin, where they can be taken back.
             if !report.outputs.isEmpty { NSWorkspace.shared.recycle(report.outputs) }
             return
         }
@@ -156,13 +178,17 @@ final class Runner {
 
     // MARK: Share page
 
-    private func share(_ action: Action, _ files: [URL], at point: NSPoint) {
+    private func share(_ action: Action, _ given: [URL], at point: NSPoint) {
+        // Another app reads these files later (a paste, AirDrop, Mail), so a temporary copy is first moved to
+        // Downloads, where it stays. Copy to Desktop makes its own lasting copy.
+        let files = action.id == "share.desktop" ? given : Incoming.keep(given)
+        let kept = files != given
         switch action.id {
         case "share.copy":
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects(files as [NSURL])
-            HUD.shared.flash("Copied", files.count == 1 ? files[0].lastPathComponent : "\(files.count) files — paste anywhere",
-                             near: point)
+            HUD.shared.flash("Copied", (files.count == 1 ? files[0].lastPathComponent : "\(files.count) files — paste anywhere")
+                             + (kept ? " · saved in Downloads" : ""), near: point)
         case "share.path":
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(files.map(\.path).joined(separator: "\n"), forType: .string)

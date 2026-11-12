@@ -79,6 +79,13 @@ enum Snapshots {
         hud.model.outputs = [file]
         save(HUDView(model: hud.model, hud: hud), size: CGSize(width: 360, height: 96), appearance: .darkAqua, background: true,
              to: dir.appendingPathComponent("hud-done.png"))
+        // The longest title, beside Show and Undo: the bubble grows so it isn't cut off.
+        hud.model.title = "Stitched into one long picture"
+        hud.model.detail = "Saved Chat 1 Stitched.jpg"
+        hud.model.width = HUD.width(for: hud.model)
+        save(HUDView(model: hud.model, hud: hud), size: CGSize(width: hud.model.width, height: 96), appearance: .aqua, background: true,
+             to: dir.appendingPathComponent("hud-long-title.png"))
+        hud.model.width = CGFloat(BubbleLayout.normal)
 
         let opts = Prefs.options()
         save(CropEditor(files: [file], options: opts), size: CGSize(width: 640, height: 640), appearance: .aqua, background: false,

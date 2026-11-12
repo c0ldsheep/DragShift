@@ -102,8 +102,9 @@ final class DragWatcher {
         if shift && !shiftWasDown && Prefs.d.bool(forKey: Key.triggerShift) { fire(.shift) }
         shiftWasDown = shift
 
-        // Mice: the wheel (middle button) or a side button, while the left button holds the file.
-        let other = NSEvent.pressedMouseButtons & ~0b11 != 0
+        // Mice: the wheel (middle button) or a side button, while the left button holds the file. Settings →
+        // Triggers chooses which of them count.
+        let other = Self.chosenButtonDown
         if other && !otherButtonWasDown && Prefs.d.bool(forKey: Key.triggerMouse) { fire(.mouse) }
         otherButtonWasDown = other
 
@@ -114,11 +115,15 @@ final class DragWatcher {
         if Prefs.d.bool(forKey: Key.triggerHover) { hover(now, loc) }
     }
 
+    private static var chosenButtonDown: Bool {
+        MouseButtons(saved: Prefs.d.string(forKey: Key.triggerMouseButtons)).matches(pressed: NSEvent.pressedMouseButtons)
+    }
+
     private func begin(_ p: Incoming.Peek) {
         dragging = true
         peek = p
         shiftWasDown = false
-        otherButtonWasDown = NSEvent.pressedMouseButtons & ~0b11 != 0
+        otherButtonWasDown = Self.chosenButtonDown
         trail.removeAll()
         stillSince = nil
         hoverFired = false

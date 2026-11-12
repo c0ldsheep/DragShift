@@ -272,7 +272,7 @@ private func pixel(_ img: CGImage, _ x: Int, _ y: Int) -> (Int, Int, Int, Int) {
         let doc = PDFDocument(url: pdf)!
         doc.page(at: 0)!.rotation = 90
         doc.write(to: pdf)
-        let img = try #require(PDFOps.render(PDFDocument(url: pdf)!.page(at: 0)!, dpi: 72))
+        let img = try #require(try PDFOps.render(PDFDocument(url: pdf)!.page(at: 0)!, dpi: 72))
         #expect(img.width == 842 && img.height == 595)
     }
 

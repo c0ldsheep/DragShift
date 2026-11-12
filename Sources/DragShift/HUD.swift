@@ -14,6 +14,59 @@ final class HUDModel: ObservableObject {
     @Published var outputs: [URL] = []
     @Published var visible = false
     @Published var link: URL?
+    /// The bubble's width, with its shadow margin. Wider than usual only when the title needs it.
+    @Published var width: CGFloat = CGFloat(BubbleLayout.normal)
+
+    /// The buttons beside the title in this state.
+    var buttons: HUDButtons {
+        switch state {
+        case .working: return .cancel
+        case .done where link != nil: return .open
+        case .done where !outputs.isEmpty: return .showUndo
+        default: return .none
+        }
+    }
+}
+
+/// The buttons the bubble can show beside its title, and how wide each set is.
+enum HUDButtons: Hashable {
+    case none, cancel, open, showUndo
+
+    @MainActor private static var widths: [HUDButtons: CGFloat] = [:]
+
+    /// Measured once from the real buttons, so it follows the system's font and button look.
+    @MainActor var width: CGFloat {
+        if self == .none { return 0 }
+        if let w = Self.widths[self] { return w }
+        let w = ceil(NSHostingView(rootView: HUDButtonRow(kind: self, show: {}, undo: {}, open: {}, cancel: {})).fittingSize.width)
+        Self.widths[self] = w
+        return w
+    }
+}
+
+struct HUDButtonRow: View {
+    let kind: HUDButtons
+    let show: () -> Void, undo: () -> Void, open: () -> Void, cancel: () -> Void
+
+    var body: some View {
+        switch kind {
+        case .cancel:
+            Button(action: cancel) { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+                .help("Cancel")
+        case .open:
+            Button("Open", action: open)
+                .controlSize(.small)
+        case .showUndo:
+            HStack(spacing: 6) {
+                Button("Show", action: show)
+                Button("Undo", action: undo)
+            }
+            .controlSize(.small)
+        case .none:
+            EmptyView()
+        }
+    }
 }
 
 @MainActor
@@ -50,7 +103,30 @@ final class HUD {
         model.detail = count > 1 ? "0 of \(count) done" : "Working…"
         model.progress = 0.02
         model.outputs = []
+        model.link = nil
         place(near: point)
+    }
+
+    static let titleFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+
+    /// How wide the bubble must be so the title isn't cut off beside its buttons.
+    static func width(for model: HUDModel) -> CGFloat {
+        let title = ceil(NSAttributedString(string: model.title, attributes: [.font: titleFont]).size().width) + 2
+        return CGFloat(BubbleLayout.width(title: Double(title), buttons: Double(model.buttons.width)))
+    }
+
+    /// The text or the buttons changed while the bubble is up: it keeps its middle and gets the width it needs.
+    private func refit() {
+        let w = Self.width(for: model)
+        guard w != model.width else { return }
+        model.width = w
+        var f = panel.frame
+        f.origin.x = f.midX - w / 2
+        f.size.width = w
+        if let vf = (panel.screen ?? NSScreen.main)?.visibleFrame {
+            f.origin.x = min(max(f.origin.x, vf.minX + 8), vf.maxX - w - 8)
+        }
+        panel.setFrame(f, display: true)
     }
 
     func update(done: Int, total: Int, fraction: Double) {
@@ -67,6 +143,7 @@ final class HUD {
             model.progress = 1
             model.outputs = []
             model.link = text.split(separator: "\n").first.flatMap { URL(string: String($0)) }.flatMap { $0.scheme?.hasPrefix("http") == true ? $0 : nil }
+            refit()
             Feedback.done(ok: true)
             scheduleHide(after: 8)
             return
@@ -81,6 +158,7 @@ final class HUD {
         model.detail = detail
         model.progress = 1
         model.outputs = report.outputs
+        refit()
         Feedback.done(ok: ok || report.failures.isEmpty)
         scheduleHide(after: model.state == .failed ? 8 : 5)
     }
@@ -104,6 +182,7 @@ final class HUD {
         model.title = title
         model.detail = detail
         model.outputs = []
+        model.link = nil
         place(near: point)
         Feedback.done(ok: false)
         scheduleHide(after: 6)
@@ -113,7 +192,8 @@ final class HUD {
     func releaseOpen() { scheduleHide(after: 2) }
 
     private func place(near point: NSPoint) {
-        let size = NSSize(width: 360, height: 96)
+        model.width = Self.width(for: model)
+        let size = NSSize(width: model.width, height: 96)
         let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
         // Just below the pointer, never under it (hovering keeps the bubble open).
         var origin = NSPoint(x: point.x - size.width / 2, y: point.y - size.height - 40)
@@ -167,7 +247,11 @@ struct HUDView: View {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 4)
-                buttons
+                HUDButtonRow(kind: model.buttons,
+                             show: { NSWorkspace.shared.activateFileViewerSelecting(model.outputs) },
+                             undo: { hud.onUndo?() },
+                             open: { if let l = model.link { NSWorkspace.shared.open(l) } },
+                             cancel: { hud.onCancel?() })
             }
             if model.state == .working {
                 ProgressView(value: model.progress)
@@ -176,12 +260,12 @@ struct HUDView: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
-        .frame(width: 344)
+        .frame(width: model.width - 16)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.5), lineWidth: 1))
         .shadow(color: .black.opacity(0.22), radius: 16, y: 6)
-        .frame(width: 360, height: 96)
+        .frame(width: model.width, height: 96)
         .opacity(model.visible ? 1 : 0)
         .offset(y: model.visible ? 0 : 8)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: model.visible)
@@ -196,26 +280,6 @@ struct HUDView: View {
             Image(systemName: "checkmark.circle.fill").font(.system(size: 20)).foregroundStyle(.green).frame(width: 22)
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 18)).foregroundStyle(.orange).frame(width: 22)
-        }
-    }
-
-    @ViewBuilder private var buttons: some View {
-        switch model.state {
-        case .working:
-            Button { hud.onCancel?() } label: { Image(systemName: "xmark") }
-                .buttonStyle(.borderless)
-                .help("Cancel")
-        case .done where model.link != nil:
-            Button("Open") { if let l = model.link { NSWorkspace.shared.open(l) } }
-                .controlSize(.small)
-        case .done where !model.outputs.isEmpty:
-            HStack(spacing: 6) {
-                Button("Show") { NSWorkspace.shared.activateFileViewerSelecting(model.outputs) }
-                Button("Undo") { hud.onUndo?() }
-            }
-            .controlSize(.small)
-        default:
-            EmptyView()
         }
     }
 }

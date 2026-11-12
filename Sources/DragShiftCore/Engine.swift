@@ -52,8 +52,9 @@ public enum Engine {
 
     /// Runs blocking work on `work` and waits for it without holding a thread.
     public static func offload<T>(_ body: @escaping () throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<T, Error>) in
-            work.async { c.resume(with: Result { try body() }) }
+        let token = CancelToken.current // the work queue isn't part of the task, so the Cancel button is handed over
+        return try await withCheckedThrowingContinuation { (c: CheckedContinuation<T, Error>) in
+            work.async { c.resume(with: Result { try CancelToken.$current.withValue(token) { try body() } }) }
         }
     }
 
@@ -107,12 +108,15 @@ public enum Engine {
         }
 
         for (i, url) in sorted.enumerated() {
+            if CancelToken.current?.isCancelled == true { break }
             progress?(i, sorted.count, Double(i) / Double(sorted.count))
             do {
                 let outs = try await runOne(action, url, o, dir(url), &report) { frac in
                     progress?(i, sorted.count, (Double(i) + frac) / Double(sorted.count))
                 }
                 report.outputs += outs
+            } catch is Cancelled {
+                break
             } catch {
                 report.failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
@@ -124,7 +128,7 @@ public enum Engine {
     static func batchOne(_ report: inout RunReport, total: Int, _ progress: Progress?,
                          _ body: @escaping () throws -> [URL]) async -> RunReport {
         progress?(0, total, 0.05)
-        do { report.outputs = try await offload(body) } catch { report.failures.append(error.localizedDescription) }
+        do { report.outputs = try await offload(body) } catch is Cancelled {} catch { report.failures.append(error.localizedDescription) }
         progress?(total, total, 1)
         return report
     }
@@ -299,6 +303,7 @@ public enum Engine {
             guard !images.isEmpty else { throw DragShiftError("No images in \(url.lastPathComponent).") }
             let folder = try Naming.newFolder(named: "\(url.lastPathComponent) (\(f.title))", in: dir)
             for (i, img) in images.enumerated() {
+                if CancelToken.current?.isCancelled == true { try? FileManager.default.removeItem(at: folder); throw Cancelled() }
                 do { _ = try ImageOps.convert(img, to: f, quality: o.quality, dir: folder) }
                 catch { box.report.failures.append("\(img.lastPathComponent): \(error.localizedDescription)") }
                 frac(Double(i + 1) / Double(images.count))
@@ -309,6 +314,7 @@ public enum Engine {
             guard !images.isEmpty else { throw DragShiftError("No images in \(url.lastPathComponent).") }
             let folder = try Naming.newFolder(named: "\(url.lastPathComponent) (Compressed)", in: dir)
             for (i, img) in images.enumerated() {
+                if CancelToken.current?.isCancelled == true { try? FileManager.default.removeItem(at: folder); throw Cancelled() }
                 if let r = try? ImageOps.compress(img, quality: o.compressQuality, maxEdge: o.compressMaxEdge, dir: folder) {
                     box.report.bytesBefore += r.before
                     box.report.bytesAfter += r.after
@@ -350,6 +356,7 @@ public enum Engine {
                 o.outputFolder = stepDir
                 let action = Action(step, RecipeSteps.title(step), "gearshape", verb: RecipeSteps.title(step))
                 let r = await run(action, inputs: current, options: o)
+                if CancelToken.current?.isCancelled == true { return RunReport() } // the steps so far are in `root`, removed on the way out
                 if let t = r.text { report.text = t }
                 done += 1
                 progress?(bi, batches.count, Double(done) / Double(total))
@@ -423,6 +430,8 @@ public enum Archive {
     /// Extracts into a new folder named after the archive. ditto keeps every entry inside that folder ("../" and
     /// absolute names land inside it; tested). A "zip bomb", a small file that unpacks to fill the disk, is refused
     /// first: the sizes the zip lists must fit in the free space (keeping 1 GB) and under `limit`.
+    /// The folder is built under a hidden name beside where it will go and gets its real name in one move at the end,
+    /// so a zip that fails half-way (a full disk, a damaged file, Cancel) never leaves a half-filled folder.
     public static func unzip(_ url: URL, dir: URL, limit: Int64 = 20 * 1024 * 1024 * 1024) throws -> URL {
         if let (files, bytes) = listedSize(url) {
             let free = (try? dir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
@@ -432,9 +441,23 @@ public enum Archive {
                 throw DragShiftError("\(url.lastPathComponent) would unpack to \(ByteFormat.string(bytes)), more than is safe here, so it wasn't unpacked.")
             }
         }
-        let folder = Naming.unique(dir.appendingPathComponent(Naming.base(url)))
-        try Shell.run(ditto, ["-x", "-k", url.path, folder.path])
-        return folder
+        let fm = FileManager.default
+        let stage = dir.appendingPathComponent(".dragshift-unzip-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: stage) } // gone already when the move worked
+        try Shell.run(ditto, ["-x", "-k", url.path, stage.path])
+        guard fm.fileExists(atPath: stage.path) else { throw DragShiftError("\(url.lastPathComponent) is empty.") }
+        var lastError: Error = DragShiftError("Couldn't unpack \(url.lastPathComponent).")
+        for _ in 0..<5 { // another job can take the name between "is it free?" and the move: then pick the next one
+            let folder = Naming.unique(dir.appendingPathComponent(Naming.base(url)))
+            do {
+                try fm.moveItem(at: stage, to: folder)
+                return folder
+            } catch {
+                lastError = error
+                if !fm.fileExists(atPath: folder.path) { break } // not a taken name: a real failure
+            }
+        }
+        throw lastError
     }
 
     /// The file count and total unpacked size a zip lists ("zipinfo -t"), or nil if it can't be read that way.

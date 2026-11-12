@@ -16,15 +16,27 @@ public enum PDFOps {
         return doc
     }
 
+    /// How many pixels a page of `pts` points needs at `dpi`. A PDF can claim any page size in a few bytes: a size
+    /// that isn't a real number gives nil (the page is skipped, the way an unreadable page is), and one that would
+    /// need more memory than a picture may use (`ImageOps.maxPixels`) is refused before any memory is asked for.
+    static func pixels(_ pts: CGSize, dpi: Double) throws -> (w: Int, h: Int)? {
+        let w = (Double(pts.width) * dpi / 72).rounded(), h = (Double(pts.height) * dpi / 72).rounded()
+        guard w.isFinite, h.isFinite, w >= 1, h >= 1 else { return nil }
+        guard w * h <= Double(ImageOps.maxPixels) else {
+            throw DragShiftError("This PDF has a page of \(Int(min(w * h / 1_000_000, 9e15))) megapixels, too big to open safely.")
+        }
+        return (Int(w), Int(h))
+    }
+
     /// Renders one page to pixels at `dpi`, page rotation applied, on white.
-    public static func render(_ page: PDFPage, dpi: Double) -> CGImage? {
+    public static func render(_ page: PDFPage, dpi: Double) throws -> CGImage? {
         guard let ref = page.pageRef else { return nil }
         let box = ref.getBoxRect(.cropBox)
         let rotated = ref.rotationAngle % 180 != 0
         let pts = rotated ? CGSize(width: box.height, height: box.width) : box.size
         let scale = dpi / 72
-        let w = Int((pts.width * scale).rounded()), h = Int((pts.height * scale).rounded())
-        guard w > 0, h > 0, let ctx = ImageOps.context(w, h, space: ImageOps.sRGB, opaque: true) else { return nil }
+        guard let (w, h) = try pixels(pts, dpi: dpi),
+              let ctx = ImageOps.context(w, h, space: ImageOps.sRGB, opaque: true) else { return nil }
         ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.interpolationQuality = .high
@@ -42,19 +54,25 @@ public enum PDFOps {
         let doc = try open(url)
         let n = doc.pageCount
         guard n > 0 else { throw DragShiftError("\(url.lastPathComponent) has no pages.") }
-        if n == 1, let page = doc.page(at: 0), let img = render(page, dpi: dpi) {
+        if n == 1, let page = doc.page(at: 0), let img = try render(page, dpi: dpi) {
             let out = Naming.output(for: url, ext: format.ext, in: dir)
             try ImageOps.write(img, to: out, format: format, quality: quality)
             return [out]
         }
         let folder = try Naming.newFolder(named: "\(Naming.base(url)) (\(format.title))", in: dir)
         let digits = String(n).count
-        for i in 0..<n {
-            guard let page = doc.page(at: i), let img = render(page, dpi: dpi) else { continue }
-            let num = String(format: "%0\(digits)d", i + 1)
-            let out = folder.appendingPathComponent("\(Naming.base(url)) \(num)").appendingPathExtension(format.ext)
-            try ImageOps.write(img, to: out, format: format, quality: quality)
-            progress?(Double(i + 1) / Double(n))
+        do {
+            for i in 0..<n {
+                try CancelToken.check()
+                guard let page = doc.page(at: i), let img = try render(page, dpi: dpi) else { continue }
+                let num = String(format: "%0\(digits)d", i + 1)
+                let out = folder.appendingPathComponent("\(Naming.base(url)) \(num)").appendingPathExtension(format.ext)
+                try ImageOps.write(img, to: out, format: format, quality: quality)
+                progress?(Double(i + 1) / Double(n))
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: folder) // stopped or failed half-way: no half-filled folder stays
+            throw error
         }
         return [folder]
     }
@@ -65,7 +83,8 @@ public enum PDFOps {
         if direct.count > 20 * max(1, doc.pageCount) / 4 { return doc.string ?? direct }
         var pages: [String] = []
         for i in 0..<doc.pageCount {
-            guard let page = doc.page(at: i), let img = render(page, dpi: 200) else { continue }
+            try CancelToken.check()
+            guard let page = doc.page(at: i), let img = try render(page, dpi: 200) else { continue }
             pages.append(try VisionOps.text(img))
         }
         let ocr = pages.joined(separator: "\n\n")
@@ -204,6 +223,7 @@ public enum PDFOps {
         try Naming.atomically(out) { tmp in
             guard let ctx = CGContext(tmp as CFURL, mediaBox: nil, nil) else { throw DragShiftError("Couldn't create the PDF.") }
             for i in 0..<doc.pageCount {
+                try CancelToken.check()
                 guard let page = doc.page(at: i), let ref = page.pageRef else { continue }
                 let box = ref.getBoxRect(.cropBox)
                 let rotated = ref.rotationAngle % 180 != 0
@@ -215,7 +235,7 @@ public enum PDFOps {
                 ctx.drawPDFPage(ref)
                 ctx.restoreGState()
                 let existing = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if existing.count < 10, let img = render(page, dpi: 220) {
+                if existing.count < 10, let img = try render(page, dpi: 220) {
                     for line in try VisionOps.lines(img) {
                         drawInvisible(line.text, in: CGRect(x: line.box.minX * size.width, y: line.box.minY * size.height,
                                                             width: line.box.width * size.width, height: line.box.height * size.height), ctx)
