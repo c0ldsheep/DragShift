@@ -111,6 +111,17 @@ enum Snapshots {
             save(TipCard(size: Tip.sizes[1]), size: CGSize(width: 260, height: 360), appearance: look, background: false,
                  to: dir.appendingPathComponent("tip-card-\(name).png"), wait: 0.3)
         }
+        // The cup from "at rest" to "full spill", in six steps, to see that the in-between moments read as one move.
+        save(HStack(spacing: 0) {
+            ForEach(0..<6, id: \.self) { i in
+                VStack(spacing: 6) {
+                    SpillingCup(spill: CGFloat(i) / 5, width: 150)
+                    Text("\(i * 20)%").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(16).background(Color.white), size: CGSize(width: 6 * 213 + 32, height: 250), appearance: .aqua, background: false,
+             to: dir.appendingPathComponent("cup-spill.png"), wait: 0.2)
         save(AboutPane(fixed: 0), size: CGSize(width: 640, height: 480), appearance: .aqua, background: false,
              to: dir.appendingPathComponent("about-new.png"), wait: 0.3)
         save(PasswordSheet(files: [file], lock: true, options: opts), size: CGSize(width: 380, height: 250), appearance: .aqua,

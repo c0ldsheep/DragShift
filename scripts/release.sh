@@ -35,6 +35,6 @@ xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
 xcrun stapler staple "$DMG"
 
 spctl --assess --type execute --verbose "$APP"
-# The website's Mac button downloads releases/latest/download/DragShift-mac.zip
-mkdir -p build/release && cp "$ZIP" build/release/DragShift-mac.zip
-echo "Ready to upload: $ZIP and $DMG (and build/release/DragShift-mac.zip for the website)"
+# The website's Mac button downloads releases/latest/download/DragShift.dmg; the zip stays for older links.
+mkdir -p build/release && cp "$ZIP" build/release/DragShift-mac.zip && cp "$DMG" build/release/DragShift.dmg
+echo "Ready to upload: build/release/DragShift.dmg and build/release/DragShift-mac.zip"

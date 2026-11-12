@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift-mac.zip"><b>Download for Mac</b></a>
+  <a href="https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift.dmg"><b>Download for Mac</b></a>
   &nbsp;·&nbsp;
   <a href="https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift.exe"><b>Download for Windows</b></a>
   &nbsp;·&nbsp;
@@ -63,9 +63,10 @@ Your original is never changed. A small bubble tells you what was saved, with **
 
 ## Download
 
-**Mac** (macOS 13 or newer, Apple Silicon and Intel): [DragShift-mac.zip](https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift-mac.zip)
+**Mac** (macOS 13 or newer, Apple Silicon and Intel): [DragShift.dmg](https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift.dmg)
 
-Open the zip, drag DragShift into Applications and open it. If macOS says it can't check the app, open
+Open it, drag DragShift onto the Applications folder beside it, then open it from Applications. If macOS says it
+can't check the app, open
 System Settings → Privacy & Security, scroll down and click **Open Anyway**.
 
 **Windows** (10 and 11): [DragShift.exe](https://github.com/c0ldsheep/DragShift/releases/latest/download/DragShift.exe)
@@ -98,10 +99,6 @@ HEIC that lands in Downloads becomes a JPG by itself) and a **clipboard shortcut
 More in [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
 ## The website
-
-<p align="center">
-  <a href="https://c0ldsheep.github.io/DragShift/"><img src="site/assets/og.jpg" width="640" alt="The DragShift website: an application form with a green SUBMITTED seal, under the words No cyber café. No queue."></a>
-</p>
 
 **https://c0ldsheep.github.io/DragShift/** is a short 3D film you scroll through. A form closes at midnight. The
 photo is too big and gets rejected. Then DragShift does it in one drag, and the form is submitted with minutes to spare.

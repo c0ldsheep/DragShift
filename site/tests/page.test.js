@@ -41,7 +41,7 @@ test("nothing is loaded from another site, and the CSP says so", () => {
 test("links go to the GitHub repo, its releases, its privacy and licence pages, or this site itself", () => {
   for (const m of html.matchAll(/<a\b[^>]*href="(https?:[^"]+)"/g)) {
     if (m[1] === "https://c0ldsheep.github.io/DragShift/") continue;
-    assert.match(m[1], /^https:\/\/github\.com\/c0ldsheep\/DragShift(\/releases\/latest(\/download\/DragShift(-mac\.zip|\.exe))?|\/blob\/main\/(PRIVACY\.md|LICENSE))?$/, m[1]);
+    assert.match(m[1], /^https:\/\/github\.com\/c0ldsheep\/DragShift(\/releases\/latest(\/download\/DragShift(-mac\.zip|\.dmg|\.exe))?|\/blob\/main\/(PRIVACY\.md|LICENSE))?$/, m[1]);
   }
   // the privacy statement and the licence the footer links to are in the repository
   for (const f of ["PRIVACY.md", "LICENSE"]) assert.ok(existsSync(new URL(`../../${f}`, import.meta.url)), f);

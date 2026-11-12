@@ -68,15 +68,18 @@ struct CoffeeCorner: View {
         return "Let go: \(Tip.sizes[i].title)"
     }
 
+    /// How far the cup has been pulled from its saucer: 0 at rest, 1 at the edge of the ring.
+    private var pulled: CGFloat {
+        min(1, (at.width * at.width + at.height * at.height).squareRoot() / (Self.outer - Self.cup / 2))
+    }
+
     private var cup: some View {
-        ZStack {
-            Circle().fill(Palette.gold)
-            Circle().strokeBorder(Palette.goldRim, lineWidth: 1)
-            Image(systemName: "cup.and.saucer.fill").font(.system(size: 20, weight: .semibold)).foregroundStyle(Palette.onHot)
-        }
-        .frame(width: Self.cup, height: Self.cup)
-        .shadow(color: .black.opacity(0.16), radius: 3, y: 2)
-        .contentShape(Circle())
+        // What you grab is a plain circle that never changes; the drawing sits on top and may reach past it
+        // (the handle, the wave, the drops).
+        Color.clear
+            .frame(width: Self.cup, height: Self.cup)
+            .contentShape(Circle())
+            .overlay(SpillingCup(spill: pulled).shadow(color: .black.opacity(0.16), radius: 3, y: 2).allowsHitTesting(false))
         .onTapGesture { chosen = nil; showCard = true }
         // Measured in the ring's space, which stays still. Measured on the cup itself the drag shook: the cup moves
         // under the pointer, so each move changed the next measurement.
@@ -192,5 +195,101 @@ struct GoldButtonStyle: ButtonStyle {
             .background(Palette.gold, in: Capsule())
             .overlay(Capsule().strokeBorder(Palette.goldRim, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
+
+/// The cup: full and level on its saucer, tipping as it is pulled away, the coffee going over its lip by the time
+/// it reaches the edge of the ring. `spill` runs from 0 to 1 and can be animated (the cup springs back upright).
+struct SpillingCup: View, Animatable {
+    var spill: CGFloat
+    /// From the cup's left side to the outside of its handle, in points.
+    var width: CGFloat = 54
+
+    var animatableData: CGFloat {
+        get { spill }
+        set { spill = newValue }
+    }
+
+    var body: some View {
+        // Room all round for the wave and the drops, which fly past the cup's own outline.
+        Canvas { ctx, size in
+            CupArt.draw(&ctx, at: CGPoint(x: size.width / 2, y: size.height / 2), width: width, spill: spill)
+        }
+        .frame(width: width * 1.42, height: width * 1.24)
+        .accessibilityHidden(true)
+    }
+}
+
+extension CupArt {
+    static let yellow = Color(red: 254 / 255, green: 212 / 255, blue: 32 / 255)
+    static let shadeYellow = Color(red: 242 / 255, green: 188 / 255, blue: 20 / 255)
+    static let rimYellow = Color(red: 254 / 255, green: 221 / 255, blue: 82 / 255)
+    static let coffee = Color(red: 89 / 255, green: 45 / 255, blue: 20 / 255)
+    static let coffeeShine = Color(red: 132 / 255, green: 73 / 255, blue: 42 / 255)
+
+    /// Slow at both ends, quick in the middle; clamped to 0...1.
+    static func ease(_ x: CGFloat) -> CGFloat {
+        let c = min(1, max(0, x))
+        return c * c * (3 - 2 * c)
+    }
+
+    static func point(_ v: [CGFloat], _ i: Int) -> CGPoint { CGPoint(x: v[2 * i], y: v[2 * i + 1]) }
+
+    static func path(_ v: [CGFloat], around c: CGPoint = .zero, scale: CGFloat = 1) -> Path {
+        var p = Path()
+        for i in 0..<v.count / 2 {
+            let q = CGPoint(x: c.x + v[2 * i] * scale, y: c.y + v[2 * i + 1] * scale)
+            if i == 0 { p.move(to: q) } else { p.addLine(to: q) }
+        }
+        p.closeSubpath()
+        return p
+    }
+
+    /// For each drop, the point of the coffee's outline it leaves from (the one nearest its start in the full spill).
+    static let dropRoots: [Int] = drops.map { d in
+        (0..<spill.count / 2).min { a, b in
+            let p = point(spill, a), q = point(spill, b)
+            return hypot(p.x - d.from.x, p.y - d.from.y) < hypot(q.x - d.from.x, q.y - d.from.y)
+        } ?? 0
+    }
+
+    /// Draws the cup with the point it turns around at `at`. `spill`: 0 = at rest, 1 = the full spill.
+    static func draw(_ ctx: inout GraphicsContext, at: CGPoint, width: CGFloat, spill t: CGFloat) {
+        let c = min(1, max(0, t))
+        let tip = 1 - (1 - c) * (1 - c)         // the cup answers the hand at once, then settles into its full tilt...
+        let pour = ease((c - 0.1) / 0.9)        // ...and the coffee follows a moment behind it
+        ctx.translateBy(x: at.x, y: at.y)
+        ctx.scaleBy(x: width / 1000, y: width / 1000)
+        ctx.rotate(by: .degrees(tilt * Double(tip)))
+
+        var cup = path(outline)
+        cup.addPath(path(hole))
+        ctx.fill(cup, with: .color(yellow), style: FillStyle(eoFill: true))
+        ctx.fill(path(shade), with: .color(shadeYellow))
+        ctx.fill(path(rim), with: .color(rimYellow))
+        ctx.fill(path(opening), with: .color(shadeYellow))
+
+        // The coffee: every point of its outline is part-way between "at rest" and "full spill".
+        var now = [CGFloat](repeating: 0, count: calm.count)
+        for i in 0..<calm.count { now[i] = calm[i] + (spill[i] - calm[i]) * pour }
+        let liquid = path(now)
+        ctx.fill(liquid, with: .color(coffee))
+
+        // Drops leave the wave one after another, the farthest-flying first, and grow as they go.
+        for (i, d) in drops.enumerated() {
+            let wait = 0.25 + 0.5 * CGFloat(i) / CGFloat(max(1, drops.count - 1))
+            let k = ease((pour - wait) / (1 - wait))
+            guard k > 0.02 else { continue }
+            let root = point(now, dropRoots[i])
+            let c = CGPoint(x: root.x + (d.to.x - root.x) * k, y: root.y + (d.to.y - root.y) * k)
+            ctx.fill(path(d.shape, around: c, scale: k), with: .color(coffee))
+        }
+        // The lighter streaks come in at the end, and only where there is coffee to shine.
+        let glint = ease((pour - 0.7) / 0.3)
+        if glint > 0.02 {
+            var onCoffee = ctx
+            onCoffee.clip(to: liquid)
+            for s in shine { onCoffee.fill(path(s), with: .color(coffeeShine.opacity(Double(glint)))) }
+        }
     }
 }

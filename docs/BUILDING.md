@@ -42,7 +42,8 @@ direct download, not the Mac App Store: the App Store doesn't allow reading the 
 drags in other apps.
 
 Before there's a Developer ID, `./scripts/package-release.sh` makes the two files the website's buttons download:
-`build/release/DragShift-mac.zip` (universal, signed ad-hoc, so macOS asks once) and `build/release/DragShift.exe`.
+`build/release/DragShift.dmg` (universal, signed ad-hoc, so macOS asks once; `DragShift-mac.zip` holds the same app
+for older links) and `build/release/DragShift.exe`.
 Upload both to a GitHub Release with exactly those names; the site links to `releases/latest/download/<name>`.
 
 ## How it works (for whoever edits the code)

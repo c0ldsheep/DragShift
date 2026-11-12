@@ -4,8 +4,6 @@
 
 **Address:** https://c0ldsheep.github.io/DragShift/
 
-![The last scene of the DragShift website: an application form with a green SUBMITTED seal, under the words "No cyber café. No queue."](../site/assets/og.jpg)
-
 `site/` is DragShift's one-page site, "The Form": a short 3D film you scroll through. A government form on a desk,
 closing at midnight. The photo is too big and gets rejected, you crop it and it's rejected again, then DragShift does
 it in one drag: the photo goes under 50 KB, a locked bank PDF gets unlocked, three scans become one PDF, and a round
