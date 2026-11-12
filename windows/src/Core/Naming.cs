@@ -39,8 +39,19 @@ namespace DragShift.Core
             }
         }
 
-        /// <summary>Writes through a temporary file in the same folder, so a crash never leaves half a file.</summary>
+        /// <summary>Creates a new file through a temporary file in the same folder. An existing destination is never overwritten.</summary>
         public static void Atomically(string dest, Action<string> write)
+        {
+            WriteAtomically(dest, write, false);
+        }
+
+        /// <summary>Replaces an owned file atomically, or creates it if it does not exist. Used for settings only.</summary>
+        public static void ReplaceAtomically(string dest, Action<string> write)
+        {
+            WriteAtomically(dest, write, true);
+        }
+
+        static void WriteAtomically(string dest, Action<string> write, bool replace)
         {
             var dir = Path.GetDirectoryName(dest) ?? ".";
             Directory.CreateDirectory(dir);
@@ -48,8 +59,8 @@ namespace DragShift.Core
             try
             {
                 write(tmp);
-                if (File.Exists(dest)) File.Delete(dest);
-                File.Move(tmp, dest);
+                if (replace && File.Exists(dest)) File.Replace(tmp, dest, null);
+                else File.Move(tmp, dest);
             }
             finally
             {

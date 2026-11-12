@@ -245,13 +245,16 @@ namespace DragShift.Engine
             }
         }
 
-        /// <summary>The printer's own paper of that size (either way round), or a custom size when it has none.</summary>
+        /// <summary>The printer's own paper (either way round). Other drivers can try a custom size; the PDF driver must support it.</summary>
         static PaperSize PaperSizeFor(PrinterSettings s, Size2 paper)
         {
             int w = (int)Math.Round(paper.Width / 0.72), h = (int)Math.Round(paper.Height / 0.72);
             foreach (PaperSize ps in s.PaperSizes)
                 if ((Math.Abs(ps.Width - w) <= 8 && Math.Abs(ps.Height - h) <= 8) || (Math.Abs(ps.Width - h) <= 8 && Math.Abs(ps.Height - w) <= 8))
                     return ps;
+            // This driver silently substitutes Letter for custom sizes, even when their dimensions are supplied.
+            if (string.Equals(s.PrinterName, "Microsoft Print to PDF", StringComparison.OrdinalIgnoreCase))
+                throw new UserError("Microsoft Print to PDF doesn't support that paper size. Choose A4 or Letter in the Print window.");
             return new PaperSize("DragShift", w, h);
         }
     }

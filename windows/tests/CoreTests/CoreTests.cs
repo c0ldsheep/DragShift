@@ -8,6 +8,104 @@ using DragShift.Core;
 
 namespace DragShift.Tests
 {
+    static class NamingPreservationTests
+    {
+        [Test]
+        static void NewOutputPreservesDestinationCreatedDuringWriting()
+        {
+            using (var s = new Sandbox())
+            {
+                var dest = Naming.Unique(s.Path_("result.txt"));
+                var sentinel = new byte[] { 0, 1, 127, 128, 255 };
+                Expect.Throws<IOException>(() => Naming.Atomically(dest, tmp =>
+                {
+                    File.WriteAllText(tmp, "converted output");
+                    File.WriteAllBytes(dest, sentinel);
+                }), "a competing writer owns the destination");
+                Expect.True(File.ReadAllBytes(dest).SequenceEqual(sentinel), "the competing file stays byte-for-byte unchanged");
+                Expect.Equal(1, Directory.GetFiles(s.Dir).Length, "only the competing file remains; temporary output is removed");
+            }
+        }
+
+        [Test]
+        static void NewOutputNeverReplacesExistingFile()
+        {
+            using (var s = new Sandbox())
+            {
+                var dest = s.Path_("original.txt");
+                File.WriteAllText(dest, "original contents");
+                Expect.Throws<IOException>(() => Naming.Atomically(dest, tmp => File.WriteAllText(tmp, "replacement")),
+                    "new outputs cannot replace an existing file");
+                Expect.Equal("original contents", File.ReadAllText(dest), "the existing file is unchanged");
+                Expect.Equal(1, Directory.GetFiles(s.Dir).Length, "failed output leaves no temporary file");
+            }
+        }
+
+        [Test]
+        static void NewOutputPublishesCompleteContents()
+        {
+            using (var s = new Sandbox())
+            {
+                var dest = s.Path_("result.txt");
+                Naming.Atomically(dest, tmp =>
+                {
+                    File.WriteAllText(tmp, "complete output");
+                    Expect.True(!File.Exists(dest), "destination is unpublished while conversion writes the temporary file");
+                });
+                Expect.Equal("complete output", File.ReadAllText(dest), "the complete output is published");
+                Expect.Equal(1, Directory.GetFiles(s.Dir).Length, "successful output leaves no temporary file");
+            }
+        }
+
+        [Test]
+        static void FailedOutputIsNotPublished()
+        {
+            using (var s = new Sandbox())
+            {
+                var dest = s.Path_("result.txt");
+                Expect.Throws<InvalidOperationException>(() => Naming.Atomically(dest, tmp =>
+                {
+                    File.WriteAllText(tmp, "partial output");
+                    throw new InvalidOperationException("conversion failed");
+                }), "failed conversion is reported");
+                Expect.True(!File.Exists(dest), "a failed conversion publishes no output");
+                Expect.Equal(0, Directory.GetFiles(s.Dir).Length, "partial temporary output is removed");
+            }
+        }
+
+        [Test]
+        static void FailedReplacementPreservesPreviousContents()
+        {
+            using (var s = new Sandbox())
+            {
+                var dest = s.Path_("settings.txt");
+                File.WriteAllText(dest, "previous settings");
+                Expect.Throws<InvalidOperationException>(() => Naming.ReplaceAtomically(dest, tmp =>
+                {
+                    File.WriteAllText(tmp, "partial settings");
+                    throw new InvalidOperationException("settings write failed");
+                }), "failed replacement is reported");
+                Expect.Equal("previous settings", File.ReadAllText(dest), "previous settings survive a failed write");
+                Expect.Equal(1, Directory.GetFiles(s.Dir).Length, "failed replacement leaves no temporary file");
+            }
+        }
+
+        [Test]
+        static void SettingsCanSaveTwiceAndReloadTheLatestValue()
+        {
+            using (var s = new Sandbox())
+            {
+                var path = s.Path_("settings.txt");
+                var settings = new Settings(path);
+                settings.Set("sample", "first value");
+                Expect.Equal("first value", new Settings(path).Get("sample"), "first save creates the settings file");
+                settings.Set("sample", "second value");
+                Expect.Equal("second value", new Settings(path).Get("sample"), "second save replaces the settings file");
+                Expect.Equal(1, Directory.GetFiles(s.Dir).Length, "settings saves leave no temporary files");
+            }
+        }
+    }
+
     static class CatalogTests
     {
         static List<string> Ids(params string[] files) =>
@@ -183,6 +281,39 @@ namespace DragShift.Tests
         }
 
         [Test]
+        static void TallHairMovesTheFrameUp()
+        {
+            var spec = new PhotoSpec();
+            var face = new Box(450, 520, 300, 300); // brows to chin
+            double measured = face.Y - face.Height * 0.9; // hair well above the usual estimate (0.55)
+            var f = Passport.Frame(face, spec, measured);
+            Expect.True(Math.Abs((face.Bottom - measured) / f.Height - 0.72) < 1e-9, "the real head is 72% of the height");
+            Expect.True(Math.Abs((measured - f.Y) / f.Height - 0.08) < 1e-9, "8% above the real top of the hair");
+            Expect.True(f.Y < Passport.Frame(face, spec).Y, "the frame reaches higher than the estimate");
+            Expect.True(Math.Abs(f.MidX - face.MidX) < 1e-9, "face still centred");
+        }
+
+        [Test]
+        static void AHairLineBelowTheEstimateChangesNothing()
+        {
+            var spec = new PhotoSpec();
+            var face = new Box(450, 520, 300, 300);
+            var estimate = Passport.Frame(face, spec).ToString();
+            Expect.Equal(estimate, Passport.Frame(face, spec, null).ToString(), "no measurement, no change");
+            Expect.Equal(estimate, Passport.Frame(face, spec, face.Y - face.Height * 0.2).ToString(), "a lower line (a low fringe) never shrinks the room above the head");
+        }
+
+        [Test]
+        static void ALineFarAboveTheHeadIsNotTheHair()
+        {
+            var spec = new PhotoSpec();
+            var face = new Box(450, 520, 300, 300);
+            double reach = face.Y - face.Height * Passport.MaxCrownAbove;
+            var f = Passport.Frame(face, spec, -9000);
+            Expect.True(Math.Abs((face.Bottom - reach) / f.Height - 0.72) < 1e-9, "hair is only believed up to " + Passport.MaxCrownAbove + " face-heights above the brows");
+        }
+
+        [Test]
         static void SpecsRoundTrip()
         {
             var us = PhotoSpec.Presets[1].Spec.Copy();
@@ -250,6 +381,75 @@ namespace DragShift.Tests
                 Expect.Equal("fit.kb.50", b.LastAction(FileKind.Image), "last action per kind");
                 Expect.Equal("pdf.compress", b.LastAction(FileKind.Pdf), "other kind kept");
                 Expect.True(File.ReadAllText(path).StartsWith("# DragShift settings", StringComparison.Ordinal), "readable file");
+            }
+        }
+    }
+
+    static class MouseTriggerTests
+    {
+        [Test]
+        static void EveryButtonUntilTheyChoose()
+        {
+            using (var s = new Sandbox())
+            {
+                var settings = new Settings(s.Path_("settings.ini"));
+                Expect.Equal(MouseTrigger.All, settings.TriggerButtons, "right, wheel and both side buttons by default");
+                Expect.Equal(MouseTrigger.All, settings.ActiveTriggerButtons, "and they are active");
+                Expect.True((settings.TriggerButtons & MouseTrigger.Right) != 0, "the right button is one of them");
+                Expect.Equal("right,middle,back,forward", MouseTriggers.Format(MouseTrigger.All), "written in a fixed order");
+                Expect.Equal("", MouseTriggers.Format(MouseTrigger.None), "none is an empty list");
+            }
+        }
+
+        [Test]
+        static void ChosenButtonsSurviveARestart()
+        {
+            using (var s = new Sandbox())
+            {
+                var path = s.Path_("settings.ini");
+                new Settings(path).TriggerButtons = MouseTrigger.Right | MouseTrigger.Back;
+                var again = new Settings(path);
+                Expect.Equal(MouseTrigger.Right | MouseTrigger.Back, again.TriggerButtons, "reloaded");
+                Expect.True(File.ReadAllText(path).Contains("trigger.mouse.buttons = right,back"), "plain words in settings.ini");
+                again.TriggerButtons = MouseTrigger.None;
+                var none = new Settings(path);
+                Expect.Equal(MouseTrigger.None, none.TriggerButtons, "no button at all is remembered, not mistaken for 'not chosen yet'");
+                Expect.Equal(MouseTrigger.None, none.ActiveTriggerButtons, "and nothing is active");
+            }
+        }
+
+        [Test]
+        static void HandEditedListsAreForgiving()
+        {
+            using (var s = new Sandbox())
+            {
+                var path = s.Path_("settings.ini");
+                File.WriteAllText(path, "trigger.mouse.buttons =  Right , FORWARD ,banana\r\n");
+                Expect.Equal(MouseTrigger.Right | MouseTrigger.Forward, new Settings(path).TriggerButtons, "case and spaces don't matter, unknown words are skipped");
+                File.WriteAllText(path, "trigger.mouse.buttons = banana\r\n");
+                Expect.Equal(MouseTrigger.All, new Settings(path).TriggerButtons, "a typo never switches the trigger off");
+                File.WriteAllText(path, "trigger.mouse.buttons = ,\r\n");
+                Expect.Equal(MouseTrigger.All, new Settings(path).TriggerButtons, "only separators is a typo too");
+                File.WriteAllText(path, "trigger.mouse.buttons =\r\n");
+                Expect.Equal(MouseTrigger.None, new Settings(path).TriggerButtons, "an empty list means none");
+            }
+        }
+
+        [Test]
+        static void SwitchedOffOrPausedTakesNoButtonButKeepsTheTicks()
+        {
+            using (var s = new Sandbox())
+            {
+                var settings = new Settings(s.Path_("settings.ini"));
+                settings.TriggerButtons = MouseTrigger.Right | MouseTrigger.Middle;
+                settings.Set(Settings.Keys.Mouse, false);
+                Expect.Equal(MouseTrigger.None, settings.ActiveTriggerButtons, "the mouse switch is off: no button is touched");
+                Expect.Equal(MouseTrigger.Right | MouseTrigger.Middle, settings.TriggerButtons, "the ticks are kept");
+                settings.Set(Settings.Keys.Mouse, true);
+                settings.Set(Settings.Keys.Paused, true);
+                Expect.Equal(MouseTrigger.None, settings.ActiveTriggerButtons, "paused: no button is touched");
+                settings.Set(Settings.Keys.Paused, false);
+                Expect.Equal(MouseTrigger.Right | MouseTrigger.Middle, settings.ActiveTriggerButtons, "back on, with the same ticks");
             }
         }
     }

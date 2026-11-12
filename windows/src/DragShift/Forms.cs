@@ -42,7 +42,8 @@ namespace DragShift
 
         public static Label Text(string text, Font font = null, Color? color = null, int width = 0)
         {
-            var l = new Label { Text = text, Font = font ?? Body, AutoSize = true, ForeColor = color ?? SystemColors.ControlText };
+            // UseMnemonic off: Windows would turn the "&" in "Tom & Jerry.jpg" into a shortcut key and drop it.
+            var l = new Label { Text = text, Font = font ?? Body, AutoSize = true, ForeColor = color ?? SystemColors.ControlText, UseMnemonic = false };
             if (width > 0) l.MaximumSize = new Size(width, 0);
             return l;
         }
@@ -59,6 +60,17 @@ namespace DragShift
         }
 
         public static Button Plain(string text) => new Button { Text = text, AutoSize = true, Padding = new Padding(8, 2, 8, 2) };
+
+        /// <summary>Shows a window and brings it to the front, even when another app has the focus (a second start of
+        /// DragShift, a drop on the shelf's gear).</summary>
+        public static void Raise(Form f)
+        {
+            if (f.WindowState == FormWindowState.Minimized) f.WindowState = FormWindowState.Normal;
+            f.Show();
+            f.TopMost = true;  // to the top of the stack…
+            f.TopMost = false; // …without staying there
+            f.Activate();
+        }
     }
 
     /// <summary>A big rounded choice: "50 KB / photos".</summary>
@@ -232,13 +244,14 @@ namespace DragShift
     {
         public event Action<bool> HotkeyChanged;
         public event Action<string> ShelfChanged;
-        readonly AppMain app;
-        Core.Settings S => app.Settings;
+        readonly Core.Settings S;
+        readonly Capabilities caps;
 
-        public SettingsForm(AppMain app)
+        public SettingsForm(Core.Settings settings, Capabilities caps)
         {
-            this.app = app;
-            Ui.Dialog(this, "DragShift Settings", 560, 520);
+            S = settings;
+            this.caps = caps;
+            Ui.Dialog(this, "DragShift Settings", 660, 580); // wide enough for the Printing tab's fields, no sideways scrolling
             TopMost = false;
             StartPosition = FormStartPosition.CenterScreen;
             var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(14, 5) };
@@ -287,7 +300,19 @@ namespace DragShift
             var tab = new TabPage("Triggers");
             var f = Page(tab);
             Check(f, "Press Shift while dragging", "Or hold Shift first, then grab the file. Press Shift again for the next page.", S.Shift, v => S.Set(Keys.Shift, v));
-            Check(f, "Click the mouse wheel while dragging", "For mice: hold the file with the left button, click the wheel (or a side button).", S.Mouse, v => S.Set(Keys.Mouse, v));
+            var mouse = Check(f, "Click another mouse button while dragging",
+                              "For mice: hold the file with the left button, then click one of these. If an app you drag from already uses a button, untick it here.",
+                              S.Mouse, v => S.Set(Keys.Mouse, v));
+            var boxes = new List<CheckBox>();
+            foreach (var (button, label) in new[] { (MouseTrigger.Right, "Right button"), (MouseTrigger.Middle, "Wheel click (middle button)"),
+                                                    (MouseTrigger.Back, "Side button: back"), (MouseTrigger.Forward, "Side button: forward") })
+            {
+                var box = new CheckBox { Text = label, Checked = (S.TriggerButtons & button) != 0, AutoSize = true, Enabled = S.Mouse, Margin = new Padding(22, 1, 0, 0) };
+                box.CheckedChanged += (s, e) => S.TriggerButtons = box.Checked ? S.TriggerButtons | button : S.TriggerButtons & ~button;
+                boxes.Add(box);
+                f.Controls.Add(box);
+            }
+            mouse.CheckedChanged += (s, e) => { foreach (var box in boxes) box.Enabled = mouse.Checked; };
             Check(f, "Tap one more finger on the touchpad", "Drag with one finger, touch a second one down. Works on Precision Touchpads (most laptops since 2016).",
                   S.Finger, v => S.Set(Keys.Finger, v));
             Check(f, "Ctrl+Alt+V opens the clipboard in the ring", "Copy files in Explorer, or take a screenshot with Win+Shift+S, then press it.",
@@ -380,6 +405,7 @@ namespace DragShift
             var mode = S.Get(Keys.OutputMode, "beside");
             where.SelectedIndex = mode == "downloads" ? 1 : mode == "folder" ? 2 : 0;
             var folderLabel = Ui.Text(S.Get(Keys.OutputFolder), Ui.Small, Ui.Muted, 480);
+            folderLabel.Visible = where.SelectedIndex == 2; // the remembered folder is shown only while it is the one in use
             where.SelectedIndexChanged += (s, e) =>
             {
                 if (where.SelectedIndex == 2)
@@ -391,6 +417,7 @@ namespace DragShift
                     }
                 }
                 S.Set(Keys.OutputMode, where.SelectedIndex == 1 ? "downloads" : where.SelectedIndex == 2 ? "folder" : "beside");
+                folderLabel.Visible = where.SelectedIndex == 2;
             };
             f.Controls.Add(where);
             f.Controls.Add(folderLabel);
@@ -448,9 +475,10 @@ namespace DragShift
             f.Controls.Add(Ui.Text("DragShift " + AppMain.Version, Ui.Title));
             f.Controls.Add(Ui.Text("Change any file while you drag it. Everything happens on this PC: no internet, no account, no tracking. Text reading and face finding use Windows' own on-device features.",
                                    null, Ui.Muted, 500));
-            f.Controls.Add(Ui.Text("This PC: text reading " + (app.Caps.Ocr ? "on" : "off (add a language with OCR in Windows Settings)")
-                                   + " · faces " + (app.Caps.Faces ? "on" : "off") + " · HEIC saving " + (app.Caps.HeicWrite ? "on" : "off (free \"HEIF Image Extensions\" in the Store)"),
-                                   Ui.Small, Ui.Muted, 500));
+            string PcLine() => "This PC: text reading " + (caps.Ocr ? "on" : "off (add a language with OCR in Windows Settings)")
+                                   + " · faces " + (caps.Faces ? "on" : "off") + " · HEIC saving " + (caps.HeicWrite ? "on" : "off (free \"HEIF Image Extensions\" in the Store)");
+            var pc = Ui.Text(PcLine(), Ui.Small, Ui.Muted, 500);
+            f.Controls.Add(pc);
             var open = Ui.Plain("Open Log");
             open.Margin = new Padding(0, 14, 0, 0);
             open.Click += (s, e) => { try { Process.Start(Paths.LogFile); } catch (Exception) { Shell.Reveal(new[] { Paths.LogFile }); } };
@@ -460,6 +488,22 @@ namespace DragShift
             var line = Ui.Text(Tip.Line(S.Fixed), null, null, 500);
             line.Margin = new Padding(0, 22, 0, 0);
             f.Controls.Add(line);
+            void RefreshAbout()
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                if (InvokeRequired)
+                {
+                    // The codec check finishes in the background; the window may close before it does.
+                    try { BeginInvoke((Action)RefreshAbout); } catch (InvalidOperationException) { }
+                    return;
+                }
+                pc.Text = PcLine();
+                line.Text = Tip.Line(S.Fixed);
+            }
+            HandleCreated += (s, e) => RefreshAbout();
+            S.Changed += RefreshAbout;
+            caps.HeicWriteChanged += RefreshAbout;
+            Disposed += (s, e) => { S.Changed -= RefreshAbout; caps.HeicWriteChanged -= RefreshAbout; };
             var hint = Ui.Text(CoffeeCup.Closed, Ui.Small, Ui.Muted, 500);
             f.Controls.Add(hint);
             var cup = new CoffeeCup { Margin = new Padding(0, 6, 0, 0) };
@@ -608,12 +652,44 @@ namespace DragShift
                     }
                 }
             }
+            // The cup on its own, no circle behind it: flat gold with a thin dark edge so it reads on light and dark windows.
             var cup = new RectangleF(rest.X + offset.X - Cup / 2 * k, rest.Y + offset.Y - Cup / 2 * k, Cup * k, Cup * k);
-            using (var gold = new SolidBrush(RingPainter.Gold)) g.FillEllipse(gold, cup); // flat, no shine
-            using (var rim = new Pen(RingPainter.GoldRim)) g.DrawEllipse(rim, cup);
-            using (var emoji = new Font("Segoe UI Emoji", 20 * k, GraphicsUnit.Pixel))
-            using (var ink = new SolidBrush(RingPainter.OnHot))
-                g.DrawString("\u2615", emoji, ink, new RectangleF(cup.X, cup.Y + 1 * k, cup.Width, cup.Height), centred);
+            using (var shape = CupShape(cup))
+            {
+                using (var gold = new SolidBrush(RingPainter.Gold)) g.FillPath(gold, shape); // flat, no shine
+                using (var edge = new Pen(RingPainter.OnHot, 1.6f * k) { LineJoin = LineJoin.Round }) g.DrawPath(edge, shape);
+            }
+        }
+
+        /// <summary>The coffee-cup symbol (U+2615 in Segoe UI Symbol, which every Windows 10 and 11 has) as an outline that
+        /// fills the box, so it can be filled and edged like any shape. Without that font a plain mug is drawn instead.</summary>
+        static GraphicsPath CupShape(RectangleF box)
+        {
+            var path = new GraphicsPath();
+            try
+            {
+                using (var family = new FontFamily("Segoe UI Symbol"))
+                    path.AddString("\u2615", family, (int)FontStyle.Regular, 100, PointF.Empty, StringFormat.GenericTypographic);
+            }
+            catch (ArgumentException) { path.Reset(); }
+            var bounds = path.GetBounds();
+            if (bounds.Width < 1 || bounds.Height < 1)
+            {
+                path.Reset(); // a plain mug: a body, a handle and a saucer
+                path.AddRectangle(new RectangleF(0, 0, 60, 70));
+                path.AddEllipse(new RectangleF(48, 12, 34, 38));
+                path.AddRectangle(new RectangleF(-8, 76, 84, 10));
+                bounds = path.GetBounds();
+            }
+            float scale = box.Height / bounds.Height;
+            using (var m = new Matrix())
+            {
+                m.Translate(box.X + box.Width / 2, box.Y + box.Height / 2);
+                m.Scale(scale, scale);
+                m.Translate(-(bounds.X + bounds.Width / 2), -(bounds.Y + bounds.Height / 2));
+                path.Transform(m);
+            }
+            return path;
         }
     }
 
@@ -622,7 +698,7 @@ namespace DragShift
     {
         public TipForm(int size)
         {
-            Ui.Dialog(this, "Buy me a coffee", 440, 190);
+            Ui.Dialog(this, size >= 0 ? Tip.Title(size) : "Buy me a coffee", 440, 190);
             var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(20), WrapContents = false };
             flow.Controls.Add(Ui.Text(size >= 0 ? Tip.Title(size) : "Buy me a coffee", Ui.Title));
             flow.Controls.Add(Ui.Text("Send ETH or USDC on Ethereum to this address. Any amount works.", null, null, 396));
@@ -645,24 +721,25 @@ namespace DragShift
     /// <summary>First run: three steps, a file to practise on, and two switches.</summary>
     sealed class WelcomeForm : Form
     {
-        public WelcomeForm(AppMain app)
+        public WelcomeForm(string practiceFile = null)
         {
-            Ui.Dialog(this, "Welcome to DragShift", 640, 430);
+            Ui.Dialog(this, "Welcome to DragShift", 640, 470);
             TopMost = false;
             StartPosition = FormStartPosition.CenterScreen;
             var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(24), WrapContents = false };
             flow.Controls.Add(Ui.Text("Change any file while you drag it", Ui.Title));
             flow.Controls.Add(Ui.Text("1.  Start dragging any file.\n"
-                                      + "2.  Press Shift (or click the mouse wheel, or touch a second finger on the touchpad).\n"
+                                      + "2.  Press Shift (or click the right mouse button, or touch a second finger on the touchpad).\n"
                                       + "3.  Push the file toward a slice and let go. Or let go in the middle: the ring stays open, so click a slice.",
                                       null, null, 580));
             var row = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 16, 0, 0) };
-            var tile = new PracticeTile { Width = 120, Height = 120 };
+            var tile = new PracticeTile(practiceFile) { Width = 120, Height = 120 };
             row.Controls.Add(tile);
             row.Controls.Add(Ui.Text("Try it here: drag this picture a little, then press Shift. Results land next to it, in DragShift's own folder, so your files stay untouched.",
                                      Ui.Small, Ui.Muted, 420));
             flow.Controls.Add(row);
-            flow.Controls.Add(Ui.Text("Also: push a dragged file against the right edge of the screen for your favourites. Ctrl+Alt+V opens what you copied.",
+            flow.Controls.Add(Ui.Text("Also: push a dragged file against the right edge of the screen for your favourites. Ctrl+Alt+V opens what you copied. "
+                                      + "Open DragShift again any time to change its settings.",
                                       Ui.Small, Ui.Muted, 580));
             var start = new CheckBox { Text = "Start DragShift with Windows", Checked = true, AutoSize = true, Margin = new Padding(0, 14, 0, 0) };
             var sendTo = new CheckBox { Text = "Add it to the right-click \"Send to\" menu", Checked = true, AutoSize = true };
@@ -685,11 +762,12 @@ namespace DragShift
     /// <summary>A sample picture you can drag to try the ring.</summary>
     sealed class PracticeTile : Control
     {
-        readonly string path = Path.Combine(Paths.Local, "Practice", "Try Me.png");
+        readonly string path;
         Point down;
 
-        public PracticeTile()
+        public PracticeTile(string practiceFile = null)
         {
+            path = practiceFile ?? Path.Combine(Paths.Local, "Practice", "Try Me.png");
             Cursor = Cursors.Hand;
             SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
             try

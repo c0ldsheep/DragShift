@@ -1,12 +1,13 @@
 using System;
 using System.Drawing;
 using System.Threading;
+using DragShift.Core;
 
 namespace DragShift
 {
     /// <summary>
     /// Watches the mouse and keyboard everywhere (low-level hooks: no admin rights, no special permission)
-    /// and turns "left button held + moved" plus Shift or a mouse wheel click into "open the ring".
+    /// and turns "left button held + moved" plus Shift or another mouse button (right, wheel, side) into "open the ring".
     /// The ring window itself then confirms it's a real file drag: Windows only hands it files when it is.
     /// Hooks must answer fast, so everything else is posted to the UI thread.
     /// </summary>
@@ -29,11 +30,26 @@ namespace DragShift
         public bool Dragging { get; private set; }
         public Point DownAt { get; private set; }
 
+        /// <summary>The mouse buttons that may open the ring while the left button holds something. A button that is not
+        /// in here is never touched: the app you drag from gets it as usual. (None while paused or switched off.)</summary>
+        public MouseTrigger Buttons
+        {
+            get => (MouseTrigger)buttons;
+            set => buttons = (int)value;
+        }
+
+        // Answers the hook needs from Windows, replaceable so the self-test can drive the real logic without a real mouse
+        // (and without writing to the real log).
+        internal Func<bool> TextCursor, LeftHeld, FullScreen;
+        internal Action<string> Note = Log.Line;
+
         readonly Native.HookProc mouseProc, keyProc; // kept in fields so they are never garbage-collected
         IntPtr mouseHook, keyHook;
         SynchronizationContext ui;
         bool ignorePress, shiftHeld;
-        int swallowUp;
+        volatile int buttons = (int)MouseTrigger.All;
+        int heldBack; // buttons whose press we swallowed: their release must be swallowed too, or the app sees half a click
+        DateTime fullScreenNoted = DateTime.MinValue;
         readonly IntPtr ibeam = Native.LoadCursor(IntPtr.Zero, (IntPtr)Native.IDC_IBEAM);
         readonly int dragX = Math.Max(4, Native.GetSystemMetrics(Native.SM_CXDRAG));
         readonly int dragY = Math.Max(4, Native.GetSystemMetrics(Native.SM_CYDRAG));
@@ -42,11 +58,16 @@ namespace DragShift
         {
             mouseProc = OnMouse;
             keyProc = OnKey;
+            TextCursor = IsTextCursor;
+            LeftHeld = Native.LeftButtonHeld;
+            FullScreen = Native.FullScreenAppInFront;
         }
 
         public void Start()
         {
             ui = SynchronizationContext.Current ?? new SynchronizationContext();
+            Down = Dragging = false;
+            heldBack = 0;
             var module = Native.GetModuleHandle(null);
             mouseHook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, mouseProc, module, 0);
             keyHook = Native.SetWindowsHookEx(Native.WH_KEYBOARD_LL, keyProc, module, 0);
@@ -60,69 +81,131 @@ namespace DragShift
             Start();
         }
 
-        void Post(Action a) => ui.Post(_ => a(), null);
+        void Post(Action a)
+        {
+            var context = ui;
+            if (context == null) a(); // no hooks installed (the self-test): nothing to hop to
+            else context.Post(_ => a(), null);
+        }
+
+        bool IsTextCursor()
+        {
+            var ci = new Native.CURSORINFO { Size = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.CURSORINFO)) };
+            return Native.GetCursorInfo(ref ci) && ci.Cursor == ibeam;
+        }
 
         IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)
         {
             if (code >= 0)
             {
-                int msg = wParam.ToInt32();
                 var info = (Native.MSLLHOOKSTRUCT)System.Runtime.InteropServices.Marshal.PtrToStructure(lParam, typeof(Native.MSLLHOOKSTRUCT));
-                var p = new Point(info.Pt.X, info.Pt.Y);
-                switch (msg)
-                {
-                    case Native.WM_LBUTTONDOWN:
-                        Down = true;
-                        Dragging = false;
-                        DownAt = p;
-                        // Selecting text (I-beam cursor) is never a file drag.
-                        var ci = new Native.CURSORINFO { Size = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.CURSORINFO)) };
-                        ignorePress = Native.GetCursorInfo(ref ci) && ci.Cursor == ibeam;
-                        Post(() => Pressed?.Invoke(p, true));
-                        break;
-                    case Native.WM_RBUTTONDOWN:
-                        Post(() => Pressed?.Invoke(p, false));
-                        break;
-                    case Native.WM_MOUSEMOVE:
-                        if (Down && !Dragging && !ignorePress && (Math.Abs(p.X - DownAt.X) >= dragX || Math.Abs(p.Y - DownAt.Y) >= dragY))
-                        {
-                            Dragging = true;
-                            bool shiftAlready = (Native.GetAsyncKeyState(Native.VK_SHIFT) & 0x8000) != 0;
-                            Post(() =>
-                            {
-                                DragStarted?.Invoke();
-                                // "Hold Shift first, then grab the file" works too.
-                                if (shiftAlready) Triggered?.Invoke(Trigger.Shift);
-                            });
-                        }
-                        break;
-                    case Native.WM_LBUTTONUP:
-                        bool was = Down;
-                        Down = false;
-                        Dragging = false;
-                        if (was) Post(() => Released?.Invoke());
-                        break;
-                    case Native.WM_MBUTTONDOWN:
-                    case Native.WM_XBUTTONDOWN:
-                        if (Down && Dragging)
-                        {
-                            // Swallowed, so the app you're dragging from never sees it (some cancel the drag on a second button).
-                            swallowUp = msg + 1;
-                            Post(() => Triggered?.Invoke(Trigger.Mouse));
-                            return (IntPtr)1;
-                        }
-                        break;
-                    case Native.WM_MBUTTONUP:
-                    case Native.WM_XBUTTONUP:
-                        if (swallowUp == msg)
-                        {
-                            swallowUp = 0;
-                            return (IntPtr)1;
-                        }
-                        break;
-                }
+                if (Handle(wParam.ToInt32(), new Point(info.Pt.X, info.Pt.Y), info.MouseData)) return (IntPtr)1;
             }
             return Native.CallNextHookEx(mouseHook, code, wParam, lParam);
+        }
+
+        /// <summary>One mouse event. True = swallow it, so the app underneath never sees it.</summary>
+        internal bool Handle(int msg, Point p, uint mouseData)
+        {
+            switch (msg)
+            {
+                case Native.WM_LBUTTONDOWN:
+                    Down = true;
+                    Dragging = false;
+                    DownAt = p;
+                    // Selecting text (I-beam cursor) is never a file drag.
+                    ignorePress = TextCursor();
+                    Post(() => Pressed?.Invoke(p, true));
+                    break;
+                case Native.WM_MOUSEMOVE:
+                    if (Down && !Dragging && !ignorePress && (Math.Abs(p.X - DownAt.X) >= dragX || Math.Abs(p.Y - DownAt.Y) >= dragY))
+                    {
+                        Dragging = true;
+                        bool shiftAlready = (Native.GetAsyncKeyState(Native.VK_SHIFT) & 0x8000) != 0;
+                        Post(() =>
+                        {
+                            DragStarted?.Invoke();
+                            // "Hold Shift first, then grab the file" works too.
+                            if (shiftAlready) Triggered?.Invoke(Trigger.Shift);
+                        });
+                    }
+                    break;
+                case Native.WM_LBUTTONUP:
+                    bool was = Down;
+                    Down = false;
+                    Dragging = false;
+                    if (was) Post(() => Released?.Invoke());
+                    break;
+                case Native.WM_RBUTTONDOWN:
+                case Native.WM_MBUTTONDOWN:
+                case Native.WM_XBUTTONDOWN:
+                {
+                    var button = ButtonOf(msg, mouseData);
+                    heldBack &= ~(int)button; // a release that never came (hooks restarted) must not eat this press's release
+                    if (Down && Dragging && (buttons & (int)button) != 0)
+                    {
+                        if (!LeftHeld())
+                        {
+                            // The left button went up without us seeing it (secure desktop, a restart): this is no drag,
+                            // and the right button must keep working.
+                            Down = Dragging = false;
+                        }
+                        else if (FullScreen())
+                        {
+                            // A game or a full-screen video is in front: its buttons are its own.
+                            if ((DateTime.UtcNow - fullScreenNoted).TotalSeconds > 30)
+                            {
+                                fullScreenNoted = DateTime.UtcNow;
+                                Post(() => Note("mouse button left alone: a full-screen app is in front"));
+                            }
+                        }
+                        else
+                        {
+                            heldBack |= (int)button;
+                            // Swallowed, so the app you're dragging from never sees it (most cancel the drag on a second button).
+                            Post(() => Triggered?.Invoke(Trigger.Mouse));
+                            return true;
+                        }
+                    }
+                    if (msg == Native.WM_RBUTTONDOWN) Post(() => Pressed?.Invoke(p, false));
+                    break;
+                }
+                case Native.WM_RBUTTONUP:
+                case Native.WM_MBUTTONUP:
+                case Native.WM_XBUTTONUP:
+                {
+                    var button = ButtonOf(msg, mouseData);
+                    if ((heldBack & (int)button) != 0)
+                    {
+                        heldBack &= ~(int)button;
+                        return true;
+                    }
+                    break;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Which button a mouse message is about. The two side buttons share one message; the high word of the
+        /// data says which (1 = back, 2 = forward).</summary>
+        static MouseTrigger ButtonOf(int msg, uint mouseData)
+        {
+            switch (msg)
+            {
+                case Native.WM_RBUTTONDOWN:
+                case Native.WM_RBUTTONUP:
+                    return MouseTrigger.Right;
+                case Native.WM_MBUTTONDOWN:
+                case Native.WM_MBUTTONUP:
+                    return MouseTrigger.Middle;
+                default:
+                    switch (mouseData >> 16)
+                    {
+                        case 1: return MouseTrigger.Back;
+                        case 2: return MouseTrigger.Forward;
+                        default: return MouseTrigger.None;
+                    }
+            }
         }
 
         IntPtr OnKey(int code, IntPtr wParam, IntPtr lParam)

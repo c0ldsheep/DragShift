@@ -17,7 +17,7 @@ namespace DragShift
         readonly ComboBox paper = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 250 };
         readonly NumericUpDown copies = new NumericUpDown { Minimum = 1, Maximum = 99, Width = 60 };
         readonly RadioButton colour = new RadioButton { Text = "Colour", AutoSize = true, Checked = true };
-        readonly RadioButton mono = new RadioButton { Text = "Black & white", AutoSize = true };
+        readonly RadioButton mono = new RadioButton { Text = "Black & white", AutoSize = true, UseMnemonic = false }; // or Windows eats the "&"
         readonly CheckBox twoSided = new CheckBox { Text = "Print on both sides", AutoSize = true };
         readonly RadioButton fit = new RadioButton { Text = "Fit", AutoSize = true, Checked = true };
         readonly RadioButton fill = new RadioButton { Text = "Fill", AutoSize = true };
@@ -376,7 +376,7 @@ namespace DragShift
                 {
                     Text = p.Name, AutoSize = true, FlatStyle = FlatStyle.Flat, Padding = new Padding(8, 2, 8, 2), Margin = new Padding(0, 0, 8, 6),
                     BackColor = on ? RingPainter.HotB : Color.FromArgb(236, 236, 240), ForeColor = on ? Color.White : SystemColors.ControlText,
-                    Font = Ui.Bold, Cursor = Cursors.Hand,
+                    Font = Ui.Bold, Cursor = Cursors.Hand, UseMnemonic = false, // or "Black & white" loses its "&"
                 };
                 b.FlatAppearance.BorderSize = 0;
                 var preset = p;

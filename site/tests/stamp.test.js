@@ -60,7 +60,7 @@ test("the published copy keeps itself on the device only with every file checked
   const sw = readFileSync(join(out, "sw.js"), "utf8");
   const kept = JSON.parse(sw.match(/const FILES = (\{[\s\S]*?\});/)[1]);
   // the page, every script and style at its stamped address, the photo and the icon; nothing else
-  const scripts = files(out, "assets").filter((f) => /\.(js|css)$/.test(f)).map((f) => `${f}?v=${v}`);
+  const scripts = files(out, "assets").filter((f) => /\.(js|css)$/.test(f)).map((f) => `${f.split("\\").join("/")}?v=${v}`);
   assert.deepEqual(Object.keys(kept).sort(), ["./", "assets/icon.svg", "assets/img/cat.jpg", ...scripts].sort());
   for (const [url, hash] of Object.entries(kept)) {
     const file = url === "./" ? "index.html" : url.split("?")[0];

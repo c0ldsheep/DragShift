@@ -465,11 +465,13 @@ namespace DragShift.Engine
         /// are counted as they're written, because the sizes a zip declares can lie.</summary>
         internal static string Unzip(string path, string dir, long maxBytes = MaxUnzippedBytes)
         {
-            var folder = Naming.Unique(Path.Combine(dir, Naming.Base(path)));
-            var root = Path.GetFullPath(folder + Path.DirectorySeparatorChar);
+            Directory.CreateDirectory(dir);
+            var stage = Path.Combine(dir, ".dragshift-unzip-" + Guid.NewGuid().ToString("N"));
+            var root = Path.GetFullPath(stage + Path.DirectorySeparatorChar);
             long free = long.MaxValue;
             try { free = new DriveInfo(Path.GetPathRoot(root)).AvailableFreeSpace; } catch (Exception) { /* network drive: no figure */ }
             long budget = Math.Min(maxBytes, free - KeepFreeBytes);
+            Directory.CreateDirectory(stage);
             try
             {
                 using (var zip = ZipFile.OpenRead(path))
@@ -479,7 +481,7 @@ namespace DragShift.Engine
                     var buffer = new byte[81920];
                     foreach (var e in zip.Entries)
                     {
-                        var target = Path.GetFullPath(Path.Combine(folder, e.FullName));
+                        var target = Path.GetFullPath(Path.Combine(stage, e.FullName));
                         if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
                         if (e.FullName.EndsWith("/", StringComparison.Ordinal) || e.FullName.EndsWith("\\", StringComparison.Ordinal))
                         {
@@ -501,13 +503,28 @@ namespace DragShift.Engine
                         }
                     }
                 }
+                // Publish the complete folder in one move. If another action takes the name meanwhile,
+                // choose another; never adopt or remove a folder that was not made by this extraction.
+                while (true)
+                {
+                    var folder = Naming.Unique(Path.Combine(dir, Naming.Base(path)));
+                    try
+                    {
+                        Directory.Move(stage, folder);
+                        stage = null;
+                        return folder;
+                    }
+                    catch (IOException)
+                    {
+                        if (!File.Exists(folder) && !Directory.Exists(folder)) throw;
+                    }
+                }
             }
-            catch (Exception)
+            finally
             {
-                try { Directory.Delete(folder, true); } catch (Exception) { /* nothing was made */ }
-                throw;
+                if (stage != null)
+                    try { Directory.Delete(stage, true); } catch (Exception) { /* nothing was made */ }
             }
-            return folder;
         }
 
         const long MaxUnzippedBytes = 20L * 1024 * 1024 * 1024, KeepFreeBytes = 1L * 1024 * 1024 * 1024;

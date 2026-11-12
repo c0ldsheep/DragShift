@@ -9,13 +9,14 @@ namespace DragShift
         public const int WH_KEYBOARD_LL = 13, WH_MOUSE_LL = 14;
         public const int WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_SYSKEYDOWN = 0x0104, WM_SYSKEYUP = 0x0105;
         public const int WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202;
-        public const int WM_RBUTTONDOWN = 0x0204, WM_MBUTTONDOWN = 0x0207, WM_MBUTTONUP = 0x0208;
+        public const int WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205, WM_MBUTTONDOWN = 0x0207, WM_MBUTTONUP = 0x0208;
         public const int WM_XBUTTONDOWN = 0x020B, WM_XBUTTONUP = 0x020C;
         public const int WM_INPUT = 0x00FF, WM_HOTKEY = 0x0312, WM_COPYDATA = 0x004A, WM_MOUSEACTIVATE = 0x0021;
         public const int MA_NOACTIVATE = 3;
+        public const int VK_LBUTTON = 0x01, VK_RBUTTON = 0x02;
         public const int VK_SHIFT = 0x10, VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_ESCAPE = 0x1B;
         public const int WS_EX_LAYERED = 0x80000, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOPMOST = 0x8;
-        public const int SM_CXDRAG = 68, SM_CYDRAG = 69;
+        public const int SM_CXDRAG = 68, SM_CYDRAG = 69, SM_SWAPBUTTON = 23;
         public const int IDC_IBEAM = 32513;
 
         public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -84,6 +85,48 @@ namespace DragShift
         [DllImport("user32.dll")]
         public static extern int GetSystemMetrics(int index);
 
+        /// <summary>Is the physical left mouse button down right now? (Windows counts physical buttons here, so with the
+        /// buttons swapped for a left-handed person the "left" one for the drag is the physical right.)</summary>
+        public static bool LeftButtonHeld()
+        {
+            int vk = GetSystemMetrics(SM_SWAPBUTTON) != 0 ? VK_RBUTTON : VK_LBUTTON;
+            return (GetAsyncKeyState(vk) & 0x8000) != 0;
+        }
+
+        [DllImport("shell32.dll")]
+        static extern int SHQueryUserNotificationState(out int state);
+
+        /// <summary>A game or a full-screen video is in front, or a presentation is running. The mouse buttons are
+        /// theirs then: DragShift must not take one away in the middle of a game.</summary>
+        public static bool FullScreenAppInFront()
+        {
+            try
+            {
+                // 2 = a full-screen app, 3 = a full-screen Direct3D game, 4 = presentation mode
+                return SHQueryUserNotificationState(out int state) == 0 && (state == 2 || state == 3 || state == 4);
+            }
+            catch (EntryPointNotFoundException) { return false; }
+            catch (DllNotFoundException) { return false; }
+        }
+
+        [DllImport("kernel32.dll")]
+        static extern bool TerminateProcess(IntPtr process, uint exitCode);
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GetCurrentProcess();
+
+        /// <summary>Ends this process at once with this exit code, skipping the DLL shutdown that some graphics drivers
+        /// crash in. Only for a process that has already saved everything it has.</summary>
+        public static void ExitNow(int code) => TerminateProcess(GetCurrentProcess(), unchecked((uint)code));
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hwnd, int command);
+        public const int SW_HIDE = 0, SW_SHOWNOACTIVATE = 4;
+
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+        [DllImport("user32.dll")]
+        public static extern bool AllowSetForegroundWindow(int processId);
+
         [DllImport("user32.dll")]
         static extern bool SystemParametersInfo(uint action, uint param, out bool value, uint winIni);
 
@@ -145,6 +188,8 @@ namespace DragShift
         public static extern IntPtr ILCreateFromPath(string path);
         [DllImport("shell32.dll")]
         public static extern void ILFree(IntPtr pidl);
+        [DllImport("shell32.dll")]
+        public static extern IntPtr ILFindLastID(IntPtr pidl);
         [DllImport("shell32.dll")]
         public static extern int SHOpenFolderAndSelectItems(IntPtr folder, uint count, IntPtr[] items, uint flags);
 

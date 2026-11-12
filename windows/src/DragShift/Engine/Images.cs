@@ -25,6 +25,17 @@ namespace DragShift.Engine
         /// <summary>The same limit as the Mac app: 250 megapixels (a 200-megapixel phone photo still opens).</summary>
         public const long MaxPixels = 250000000;
 
+        /// <summary>Check untrusted dimensions before allocating or rendering a full pixel buffer.</summary>
+        public static void RequireSafeSize(double width, double height, string name)
+        {
+            if (double.IsNaN(width) || double.IsNaN(height) || double.IsInfinity(width) || double.IsInfinity(height)
+                || width < 1 || height < 1)
+                throw new UserError(name + " has an invalid image size.");
+            // Use doubles here: a pair of uint dimensions can overflow even a signed long when multiplied.
+            if (width > int.MaxValue || height > int.MaxValue || width * height > MaxPixels)
+                throw new UserError(name + " is " + Math.Floor(width * height / 1000000) + " megapixels, too big to open safely.");
+        }
+
         /// <summary>Upright pixels, colour-managed to sRGB. maxEdge > 0 shrinks big pictures after decoding.</summary>
         public static async Task<Bitmap> Load(string path, int maxEdge = 0)
         {
@@ -36,9 +47,8 @@ namespace DragShift.Engine
                 {
                     var dec = await BitmapDecoder.CreateAsync(stream);
                     // A tiny file can claim a huge size ("picture bomb"): refuse it before any pixels are decoded.
-                    long pixels = (long)dec.PixelWidth * dec.PixelHeight;
-                    if (pixels > MaxPixels)
-                        throw new UserError(Path.GetFileName(path) + " is " + pixels / 1000000 + " megapixels, too big to open safely.");
+                    RequireSafeSize(dec.PixelWidth, dec.PixelHeight, Path.GetFileName(path));
+                    RequireSafeSize(dec.OrientedPixelWidth, dec.OrientedPixelHeight, Path.GetFileName(path));
                     var data = await dec.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, new BitmapTransform(),
                                                            ExifOrientationMode.RespectExifOrientation, ColorManagementMode.ColorManageToSRgb);
                     bmp = FromBgra(data.DetachPixelData(), (int)dec.OrientedPixelWidth, (int)dec.OrientedPixelHeight);
@@ -65,6 +75,7 @@ namespace DragShift.Engine
                 using (var ms = new MemoryStream(File.ReadAllBytes(path)))
                 using (var img = Image.FromStream(ms))
                 {
+                    RequireSafeSize(img.Width, img.Height, Path.GetFileName(path));
                     var bmp = new Bitmap(img.Width, img.Height, PixelFormat.Format32bppPArgb);
                     using (var g = Graphics.FromImage(bmp)) g.DrawImage(img, 0, 0, img.Width, img.Height);
                     if (img.PropertyIdList.Contains(0x0112))
@@ -86,6 +97,7 @@ namespace DragShift.Engine
 
         public static Bitmap FromBgra(byte[] bgraPremultiplied, int w, int h)
         {
+            RequireSafeSize(w, h, "This picture");
             var bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
             var d = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
             try

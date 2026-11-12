@@ -38,13 +38,19 @@ namespace DragShift.Engine
             using (var page = doc.GetPage(index))
             {
                 var size = page.Size; // 1/96 inch, rotation applied
+                if (double.IsNaN(size.Width) || double.IsNaN(size.Height) || double.IsInfinity(size.Width) || double.IsInfinity(size.Height)
+                    || size.Width <= 0 || size.Height <= 0 || double.IsNaN(dpi) || double.IsInfinity(dpi) || dpi <= 0)
+                    throw new UserError("This PDF page has an invalid image size.");
+                double pixelWidth = Math.Max(1, Math.Round(size.Width / 96 * dpi)), pixelHeight = Math.Max(1, Math.Round(size.Height / 96 * dpi));
+                Images.RequireSafeSize(pixelWidth, pixelHeight, "This PDF page");
                 points?.Invoke(size.Width * 72 / 96, size.Height * 72 / 96);
-                uint w = (uint)Math.Max(1, Math.Round(size.Width / 96 * dpi)), h = (uint)Math.Max(1, Math.Round(size.Height / 96 * dpi));
+                uint w = (uint)pixelWidth, h = (uint)pixelHeight;
                 using (var ras = new InMemoryRandomAccessStream())
                 {
                     await page.RenderToStreamAsync(ras, new PdfPageRenderOptions { DestinationWidth = w, DestinationHeight = h });
                     ras.Seek(0);
                     var dec = await BitmapDecoder.CreateAsync(ras);
+                    Images.RequireSafeSize(dec.PixelWidth, dec.PixelHeight, "This PDF page");
                     var data = await dec.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, new BitmapTransform(),
                                                            ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
                     using (var raw = Images.FromBgra(data.DetachPixelData(), (int)dec.PixelWidth, (int)dec.PixelHeight))

@@ -27,7 +27,8 @@ namespace DragShift
         readonly Timer spinner = new Timer { Interval = 33 };
         readonly Timer fade = new Timer();
         readonly Dictionary<string, RectangleF> buttons = new Dictionary<string, RectangleF>();
-        const float W = 380, H = 92;
+        const float MinW = 380, MaxW = 560, H = 92;
+        float W = MinW; // 380 wide, and wider (never over 560) only when a long title would not fit beside its buttons
 
         public Hud()
         {
@@ -48,6 +49,7 @@ namespace DragShift
             detail = count > 1 ? "0 of " + count + " done" : "";
             progress = 0.03;
             canUndo = canShow = false;
+            W = WidthFor(title, Labels());
             Place(near);
             fade.Stop();
             spinner.Start();
@@ -71,6 +73,7 @@ namespace DragShift
             detail = text;
             canUndo = undo;
             canShow = show;
+            W = WidthFor(title, Labels());
             if (!Visible) Place(Cursor.Position);
             Render();
             if (!Visible) Show();
@@ -85,6 +88,7 @@ namespace DragShift
             title = heading;
             detail = text ?? "";
             canUndo = canShow = false;
+            W = WidthFor(title, Labels());
             Place(near);
             Render();
             if (!Visible) Show();
@@ -97,6 +101,30 @@ namespace DragShift
         {
             anchor = near;
             scale = Native.ScaleAt(near.X, near.Y);
+        }
+
+        /// <summary>The buttons the bubble shows right now, left to right.</summary>
+        List<string> Labels()
+        {
+            var labels = new List<string>();
+            if (state == State.Working) labels.Add("Cancel");
+            if (canShow) labels.Add("Show");
+            if (canUndo) labels.Add("Undo");
+            return labels;
+        }
+
+        /// <summary>How wide the bubble must be for the whole title to show beside these buttons: 380, or more (never over 560).
+        /// A long title such as "Stitched into one long picture" used to be cut to "Stitched into one long…" beside Show and Undo.</summary>
+        internal static float WidthFor(string heading, IList<string> buttonLabels)
+        {
+            using (var bmp = new Bitmap(1, 1))
+            using (var g = Graphics.FromImage(bmp))
+            {
+                float need = 62 + 14 + 6; // the status mark, the right margin and a little air
+                using (var f = RingPainter.Text(12, FontStyle.Bold)) foreach (var label in buttonLabels) need += g.MeasureString(label, f).Width + 22 + 8;
+                using (var f = RingPainter.Text(14, FontStyle.Bold)) need += g.MeasureString(heading ?? "", f).Width;
+                return Math.Max(MinW, Math.Min(MaxW, need));
+            }
         }
 
         Rectangle Bounds_()
@@ -184,10 +212,7 @@ namespace DragShift
 
             // Buttons on the right
             buttons.Clear();
-            var labels = new List<string>();
-            if (state == State.Working) labels.Add("Cancel");
-            if (canShow) labels.Add("Show");
-            if (canUndo) labels.Add("Undo");
+            var labels = Labels();
             float right = W - 14;
             using (var f = RingPainter.Text(12, FontStyle.Bold))
             {

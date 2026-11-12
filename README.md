@@ -160,16 +160,17 @@ part has the downloads.
 ## Windows
 
 `windows/` is the same app for Windows 10 and 11: the same ring (same sizes and look), favourites shelf, recipes,
-repeat, "your usual" glow, clipboard shortcut (**Ctrl+Alt+V**), Under KB and Passport. It's one ~380 KB `DragShift.exe` built on
+repeat, "your usual" glow, clipboard shortcut (**Ctrl+Alt+V**), Under KB and Passport. It's one ~456 KB `DragShift.exe` built on
 .NET Framework 4.8, which every Windows 10 and 11 PC already has, so there's nothing to install. It never asks for
 admin rights.
 
 | You want to… | Do this |
 |---|---|
-| Open the ring | Drag a file, press **Shift**. Or click the **mouse wheel** while dragging. |
+| Open the ring | Drag a file, press **Shift**. Or, with a mouse, hold the file with the left button and click the **right button**. The wheel click and the two side buttons work too; Settings → Triggers lets you tick the ones you want (and leave the others to the app you're dragging from). |
 | Touchpad | Drag with one finger, touch a second one down (Precision Touchpads: most laptops since 2016). |
 | Pick | Push toward a slice and let go, or let go in the middle and click. Esc closes it. |
-| Favourites | Push the dragged file against the right edge of the screen. Right-click a slice to add one. |
+| Favourites | Push the dragged file against the right edge of the screen. Right-click a slice to add one. The last tile there is a **gear**: drop the file on it to open Settings. |
+| Settings | Open **DragShift** again (double-click `DragShift.exe`), or the tray icon → Settings…. |
 | Without dragging | Explorer → right-click → **Send to → DragShift**, the tray icon → Convert Files…, or Ctrl+Alt+V. |
 
 What's in it on Windows: pictures to JPG · PNG · WebP · HEIC (with the free Store extension) · TIFF · BMP · PDF ·
@@ -198,7 +199,8 @@ Unsigned `.exe` files get a SmartScreen warning ("Windows protected your PC" →
 are code-signed or have been downloaded by enough people.
 
 How it sees drags on Windows: low-level mouse and keyboard hooks notice "left button held + moved" and Shift or a
-wheel click. The ring then appears, almost invisible, under the pointer; Windows only hands it a file list when a file
+second mouse button (right, wheel or side, as ticked in Settings; it takes only those, and none while a full-screen game
+or video is in front). The ring then appears, almost invisible, under the pointer; Windows only hands it a file list when a file
 is really being dragged, so text selections and window moves never open it. While a ring is pinned it never takes
 the keyboard focus from the app you're in. Code: `windows/src/Core` (shared logic, tested with `windows/tests`),
 `windows/src/DragShift` (`DragTracker`, `Touchpad`, `RingForm` + `RingPainter`, `ShelfForm`, `Hud`, `AppMain`,

@@ -11,9 +11,12 @@ const base = `http://127.0.0.1:${port}`;
 let server;
 
 before(async () => {
-  server = spawn("python3", ["scripts/serve-site.py", "site", String(port)], { cwd: root, stdio: "ignore" });
+  server = spawn(process.platform === "win32" ? "python" : "python3", ["scripts/serve-site.py", "site", String(port)], { cwd: root, stdio: "ignore" });
+  let startupError;
+  server.once("error", (error) => { startupError = error; });
   for (let i = 0; i < 50; i++) {
-    try { await fetch(base + "/"); return; } catch { await new Promise((r) => setTimeout(r, 100)); }
+    if (startupError) throw startupError;
+    try { await (await fetch(base + "/")).arrayBuffer(); return; } catch { await new Promise((r) => setTimeout(r, 100)); }
   }
   throw new Error("serve-site.py didn't start");
 });
@@ -30,6 +33,7 @@ test("the page and its files come with the security headers, and no version", as
     assert.equal(h.get("referrer-policy"), "no-referrer");
     assert.equal(h.get("cache-control"), "no-cache");
     assert.doesNotMatch(h.get("server") ?? "", /Python|SimpleHTTP|\d/);
+    await r.arrayBuffer();
   }
 });
 

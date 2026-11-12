@@ -1,6 +1,6 @@
 # Privacy
 
-_Last updated: 10 November 2026_
+_Last updated: 12 November 2026_
 
 DragShift is made by c0ldsheep. In short: **DragShift collects nothing.** The app and the website have no accounts,
 no analytics, no ads, no cookies and no trackers.
@@ -17,6 +17,10 @@ no analytics, no ads, no cookies and no trackers.
     `%LOCALAPPDATA%\DragShift\DragShift.log`), with action names, file counts and error messages
   - a practice picture
   - a count of how many files DragShift has made for you (just a number, shown in the About tab)
+
+- On Windows, clipboard pictures use temporary local copies. Finishing an action, cancelling or quitting removes
+  those copies. If Windows is still using one while the app quits, the next start removes it. Copy, Copy Path,
+  Show and Share save a lasting copy in Downloads so the file still works afterwards.
 
   These never leave your computer. To remove them, delete the app and those files.
 - Passwords you type to lock or unlock a PDF are used once, in memory, and are never saved or logged.

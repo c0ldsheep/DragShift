@@ -77,13 +77,21 @@ namespace DragShift.Core
         /// (measured 0.51–0.54 on real portraits on the Mac; a little extra keeps hair off the edge).</summary>
         public const double CrownAbove = 0.55;
 
+        /// <summary>Hair never starts higher than this above the brows. A measured line farther up than that is
+        /// something else on the wall (a shelf, a frame), not the head.</summary>
+        public const double MaxCrownAbove = 1.2;
+
         public static double TopShare(PhotoSpec s) => s.Head >= 0.7 ? 0.08 : 0.1;
 
         /// <summary>The part of the picture that becomes the photo. It can reach past the picture's
         /// edges; that part is filled with the background colour.</summary>
-        public static Box Frame(Box face, PhotoSpec spec)
+        /// <param name="measuredCrown">Where the top of the head really is, when it could be seen against a plain wall.
+        /// It only counts when it is higher than the estimate (big hair, a hat), so the top of the head is never cut off.</param>
+        public static Box Frame(Box face, PhotoSpec spec, double? measuredCrown = null)
         {
             double crown = face.Y - face.Height * CrownAbove;
+            if (measuredCrown.HasValue && measuredCrown.Value < crown)
+                crown = Math.Max(measuredCrown.Value, face.Y - face.Height * MaxCrownAbove);
             double head = face.Bottom - crown;
             double h = head / spec.Head;
             double w = h * spec.WidthMM / spec.HeightMM;

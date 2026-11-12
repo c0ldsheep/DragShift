@@ -21,6 +21,7 @@ namespace DragShift
         /// <summary>slice, files, files are temporary (clipboard)</summary>
         public event Action<Slice, List<string>, bool> Perform;
         public event Action<string> Flash;
+        public event Action InputsReleased;
         public Func<IList<string>, List<RingPage>> BuildPages;
         public Func<string, bool> ToggleFavorite;
         public Func<FileKind, Slice> LastActionFor;
@@ -102,8 +103,7 @@ namespace DragShift
         void Reveal(List<string> files, Point cursor)
         {
             probe = false;
-            Files = files;
-            temporary = false;
+            SetInputs(files, false);
             Configure();
             Place(cursor, false);
             OpenedAt = DateTime.Now;
@@ -117,14 +117,20 @@ namespace DragShift
             probe = false;
             dropped = false;
             catchAll = false;
-            Files = files.ToList();
-            temporary = temp;
+            SetInputs(files, temp);
             Model.Mode = RingModel.RingMode.Click;
             Model.Armed = null;
             Configure();
             Place(at, false);
             OpenedAt = DateTime.Now;
             StartAppear();
+        }
+
+        internal void SetInputs(IList<string> files, bool temp)
+        {
+            InputsReleased?.Invoke();
+            Files = files.ToList();
+            temporary = temp;
         }
 
         void Configure()
@@ -359,7 +365,11 @@ namespace DragShift
                 return;
             }
             if (e.Button != MouseButtons.Left) return;
-            if (hit.Kind == G.HitKind.Slice && hit.Index < Model.Slices.Count)
+            if (hit.Kind == G.HitKind.Hub)
+            {
+                HideRing();
+            }
+            else if (hit.Kind == G.HitKind.Slice && hit.Index < Model.Slices.Count)
             {
                 var s = Model.Slices[hit.Index];
                 var files = Files;
@@ -415,6 +425,7 @@ namespace DragShift
             Model.Hovered = null;
             Model.HoveredTab = null;
             if (Visible) Hide();
+            InputsReleased?.Invoke();
         }
     }
 }

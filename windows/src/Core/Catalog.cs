@@ -9,7 +9,18 @@ namespace DragShift.Core
     /// and text reading needs a language with OCR installed.</summary>
     public sealed class Capabilities
     {
-        public bool HeicWrite { get; set; }
+        bool heicWrite;
+        public event Action HeicWriteChanged;
+        public bool HeicWrite
+        {
+            get => heicWrite;
+            set
+            {
+                if (heicWrite == value) return;
+                heicWrite = value;
+                HeicWriteChanged?.Invoke();
+            }
+        }
         public bool Ocr { get; set; } = true;
         public bool Faces { get; set; } = true;
         public bool Media { get; set; } = true;
@@ -33,7 +44,7 @@ namespace DragShift.Core
             public const string Share = "", Link = "", FolderOpen = "", Bolt = "", Star = "";
             public const string StarFill = "", Slides = "", Refresh = "";
             public const string Print = "", More = "";
-            public const string Rows = "\uE8A9";
+            public const string Rows = "\uE8FD"; // BulletedList: rows stacked, rather than ViewAll's grid.
         }
 
         static Slice ToImage(ImageFormat f)

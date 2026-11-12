@@ -31,6 +31,9 @@ namespace DragShift
         readonly Hud hud = new Hud();
         readonly NotifyIcon tray = new NotifyIcon();
         readonly Receiver receiver;
+        readonly ClipboardInbox clipboard;
+        IDisposable ringClipboardHold;
+        bool clipboardCleanupQueued, quitting;
         CancellationTokenSource job;
         List<string> lastOutputs = new List<string>();
         DateTime lastTrigger = DateTime.MinValue;
@@ -41,6 +44,8 @@ namespace DragShift
         public AppMain(string[] args)
         {
             Log.Start(Version);
+            clipboard = new ClipboardInbox(Paths.Inbox, QueueClipboardCleanup);
+            if (clipboard.StaleFailures > 0) Log.Line("clipboard cleanup deferred: " + clipboard.StaleFailures + " file(s)");
             Caps.Ocr = Vision.OcrAvailable;
             Caps.Faces = Vision.FacesAvailable;
             Log.Line("can read text: " + Caps.Ocr + ", find faces: " + Caps.Faces);
@@ -54,17 +59,27 @@ namespace DragShift
             // was already counted, so they call Perform directly.
             ring.Perform += (slice, files, temp) => { Picked(slice, files); Perform(slice, files, temp); };
             ring.Flash += text => hud.ShowFlash(text, null, Cursor.Position);
+            ring.InputsReleased += () =>
+            {
+                ringClipboardHold?.Dispose();
+                ringClipboardHold = null;
+                QueueClipboardCleanup();
+            };
 
             shelf.Side = Settings.Get(Keys.Shelf, "right");
             shelf.Favorites = files => Catalog.FavoriteSlices(Settings.Favorites,
                 Catalog.BasePages(files, Caps).SelectMany(p => p.Slices).ToList(), files, Recipe.BuiltIns, Settings.PrintPresets);
             shelf.Perform += (slice, files) => { Picked(slice, files); Perform(slice, files, false); };
+            shelf.OpenSettings += ShowSettings;
 
             hud.ShowClicked += () => Shell.Reveal(lastOutputs);
             hud.UndoClicked += Undo;
             hud.CancelClicked += () => job?.Cancel();
 
             tracker.Triggered += Trigger;
+            // The mouse watcher only ever takes the buttons that are ticked, and none while paused or switched off.
+            tracker.Buttons = Settings.ActiveTriggerButtons;
+            Settings.Changed += () => tracker.Buttons = Settings.ActiveTriggerButtons;
             tracker.DragStarted += () =>
             {
                 fingerBase = touch.Count;
@@ -95,6 +110,7 @@ namespace DragShift
 
             receiver = new Receiver();
             receiver.Files += files => ShowRingAtCenter(files, false);
+            receiver.OpenSettings += ShowSettings;
             receiver.Hotkey += OpenClipboard;
             receiver.ApplyHotkey(Settings.GetBool(Keys.Hotkey, true));
 
@@ -110,9 +126,13 @@ namespace DragShift
             tracker.Start();
             touch.Start();
 
-            if (!Settings.GetBool(Keys.WelcomeDone, false)) ShowWelcome();
+            bool firstRun = !Settings.GetBool(Keys.WelcomeDone, false);
+            if (firstRun) ShowWelcome();
             var files = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal) && (File.Exists(a) || Directory.Exists(a))).ToList();
             if (files.Count > 0) ShowRingAtCenter(files, false);
+            // Opening DragShift itself (double-click) shows its Settings: there is no menu bar to look in. Starting with
+            // Windows (--background), Send to and the very first start stay quiet or show their own window.
+            else if (!firstRun && !args.Contains("--background")) ShowSettings();
         }
 
         // MARK: Triggers
@@ -206,6 +226,7 @@ namespace DragShift
                 else
                 {
                     var form = new PrintForm(files, Settings);
+                    KeepClipboardInput(form, files);
                     form.Chosen += (p, dialog) =>
                     {
                         if (dialog) PrintFiles(files, p, true);
@@ -219,10 +240,11 @@ namespace DragShift
                 var recipe = Recipe.BuiltIns.FirstOrDefault(r => r.Id == slice.Id);
                 if (recipe != null) RunJob(recipe.Name, files, temporary, (o, p, ct) => Engine.Runner.RunRecipe(recipe, files, o, p, ct));
             }
-            else if (slice.IsShare) Share(slice, files);
+            else if (slice.IsShare) Share(slice, files, temporary);
             else if (slice.Editor == Editor.FitKB)
             {
                 var form = new FitForm(files, Settings.GetInt(Keys.FitLast, 100));
+                KeepClipboardInput(form, files);
                 form.Chosen += kb =>
                 {
                     Settings.Set(Keys.FitLast, kb);
@@ -233,6 +255,7 @@ namespace DragShift
             else if (slice.Editor == Editor.Resize)
             {
                 var form = new ResizeForm(files);
+                KeepClipboardInput(form, files);
                 form.Chosen += step => Perform(new Slice(step, "Resize", Catalog.Glyph.Resize, "Resizing"), files, temporary);
                 form.Show();
             }
@@ -242,6 +265,7 @@ namespace DragShift
         /// <summary>Lays the files out with the progress bubble, then sends them to the preset's printer.</summary>
         async void PrintFiles(List<string> files, PrintPreset preset, bool dialog)
         {
+            using var input = clipboard.Hold(files);
             var near = Cursor.Position;
             hud.Begin("Printing", files.Count, near);
             try
@@ -293,6 +317,7 @@ namespace DragShift
         async void RunJob(string verb, List<string> files, bool temporary,
                           Func<Options, IProgress<double>, CancellationToken, Task<RunReport>> work)
         {
+            using var input = clipboard.Hold(files);
             job?.Cancel();
             var cts = new CancellationTokenSource();
             job = cts;
@@ -369,8 +394,29 @@ namespace DragShift
             lastOutputs = new List<string>();
         }
 
-        void Share(Slice slice, List<string> files)
+        void Share(Slice slice, List<string> files, bool temporary)
         {
+            if (temporary)
+            {
+                // File paths on the clipboard and in Explorer must still work after the import is removed.
+                try
+                {
+                    var saved = new List<string>();
+                    foreach (var file in files)
+                    {
+                        var path = Naming.Output(file, "png", null, Paths.Downloads);
+                        Naming.Atomically(path, tmp => File.Copy(file, tmp));
+                        saved.Add(path);
+                    }
+                    files = saved;
+                    Settings.AddFixed(saved.Count);
+                }
+                catch (Exception)
+                {
+                    hud.Finish("That didn't work", "Windows couldn't save the clipboard picture in Downloads. Try copying the picture again.", false, false, true);
+                    return;
+                }
+            }
             switch (slice.Id)
             {
                 case "share.copy":
@@ -408,6 +454,29 @@ namespace DragShift
 
         // MARK: Other ways in
 
+        void QueueClipboardCleanup()
+        {
+            if (quitting || clipboardCleanupQueued) return;
+            clipboardCleanupQueued = true;
+            Application.Idle += CleanupClipboardOnIdle;
+        }
+
+        void CleanupClipboardOnIdle(object sender, EventArgs e)
+        {
+            Application.Idle -= CleanupClipboardOnIdle;
+            clipboardCleanupQueued = false;
+            int failed = clipboard.CleanupUnheld();
+            if (failed > 0) Log.Line("clipboard cleanup deferred: " + failed + " file(s)");
+        }
+
+        void KeepClipboardInput(Form form, IList<string> files)
+        {
+            var input = clipboard.Hold(files);
+            // Close can precede Chosen. The idle cleanup waits for Chosen to hand the file to its job.
+            form.FormClosed += (s, e) => input.Dispose();
+            form.Disposed += (s, e) => input.Dispose();
+        }
+
         void ShowRingAtCenter(List<string> files, bool temporary)
         {
             var work = Screen.FromPoint(Cursor.Position).WorkingArea;
@@ -428,15 +497,19 @@ namespace DragShift
                 {
                     using (var img = Clipboard.GetImage())
                     {
-                        Directory.CreateDirectory(Paths.Inbox);
-                        var path = Naming.Unique(Path.Combine(Paths.Inbox, "Clipboard Image.png"));
-                        img.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                        var path = clipboard.Save(p => img.Save(p, System.Drawing.Imaging.ImageFormat.Png));
                         ring.ShowForClick(new[] { path }, true, Cursor.Position);
+                        ringClipboardHold = clipboard.Hold(new[] { path });
                         return;
                     }
                 }
             }
             catch (ExternalException) { }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                hud.ShowFlash("Couldn't open the picture", "Windows couldn't make a temporary copy. Try copying the picture again.", Cursor.Position);
+                return;
+            }
             hud.ShowFlash("Nothing to open", "Copy a file in Explorer or take a screenshot (Win+Shift+S) first", Cursor.Position);
         }
 
@@ -512,27 +585,31 @@ namespace DragShift
         {
             if (settingsForm == null || settingsForm.IsDisposed)
             {
-                settingsForm = new SettingsForm(this);
+                settingsForm = new SettingsForm(Settings, Caps);
                 settingsForm.HotkeyChanged += on => receiver.ApplyHotkey(on);
                 settingsForm.ShelfChanged += side => shelf.Side = side;
             }
-            settingsForm.Show();
-            settingsForm.Activate();
+            Ui.Raise(settingsForm);
         }
 
         void ShowWelcome()
         {
             if (welcomeForm == null || welcomeForm.IsDisposed)
             {
-                welcomeForm = new WelcomeForm(this);
+                welcomeForm = new WelcomeForm();
                 welcomeForm.FormClosed += (s, e) => Settings.Set(Keys.WelcomeDone, true);
             }
-            welcomeForm.Show();
-            welcomeForm.Activate();
+            Ui.Raise(welcomeForm);
         }
 
         void Quit()
         {
+            quitting = true;
+            job?.Cancel();
+            ringClipboardHold?.Dispose();
+            Application.Idle -= CleanupClipboardOnIdle;
+            clipboard.Dispose();
+            if (clipboard.Remaining > 0) Log.Line("clipboard cleanup deferred: " + clipboard.Remaining + " file(s)");
             tray.Visible = false;
             tracker.Dispose();
             touch.Dispose();
@@ -547,13 +624,17 @@ namespace DragShift
     {
         public const string Title = "DragShift.Receiver";
         const int MaxBytes = 4 << 20, MaxFiles = 1000;
+        const int FilesMarker = 1, SettingsMarker = 2;
         public event Action<List<string>> Files;
+        /// <summary>A second start with no files: show the Settings window.</summary>
+        public event Action OpenSettings;
         public event Action Hotkey;
         bool registered;
 
-        public Receiver()
+        /// <param name="title">Only the self-test passes its own, so a test can never reach the running DragShift.</param>
+        public Receiver(string title = Title)
         {
-            CreateHandle(new CreateParams { Caption = Title, Parent = (IntPtr)(-3) });
+            CreateHandle(new CreateParams { Caption = title, Parent = (IntPtr)(-3) });
         }
 
         public void ApplyHotkey(bool on)
@@ -570,9 +651,16 @@ namespace DragShift
             else if (m.Msg == Native.WM_COPYDATA)
             {
                 var data = (Native.COPYDATASTRUCT)Marshal.PtrToStructure(m.LParam, typeof(Native.COPYDATASTRUCT));
+                // "Open Settings" carries no data at all
+                if (data.Data == (IntPtr)SettingsMarker && data.Bytes == 0 && data.Ptr == IntPtr.Zero)
+                {
+                    OpenSettings?.Invoke();
+                    m.Result = (IntPtr)1;
+                    return;
+                }
                 // only our own hand-off (marker 1, a sane size, paths that exist): any other program on this desktop
                 // could send this window a message
-                if (data.Data != (IntPtr)1 || data.Bytes <= 0 || data.Bytes > MaxBytes || data.Ptr == IntPtr.Zero)
+                if (data.Data != (IntPtr)FilesMarker || data.Bytes <= 0 || data.Bytes > MaxBytes || data.Ptr == IntPtr.Zero)
                 {
                     m.Result = IntPtr.Zero;
                     return;
@@ -588,18 +676,32 @@ namespace DragShift
         }
 
         /// <summary>From a second copy: hand the files to the running one. False if none is running.</summary>
-        public static bool SendToRunning(IEnumerable<string> files)
+        public static bool SendToRunning(IEnumerable<string> files, string title = Title)
         {
-            var target = Native.FindWindowEx((IntPtr)(-3), IntPtr.Zero, null, Title);
+            var target = Native.FindWindowEx((IntPtr)(-3), IntPtr.Zero, null, title);
             if (target == IntPtr.Zero) return false;
             var text = string.Join("\n", files);
             var ptr = Marshal.StringToHGlobalUni(text);
             try
             {
-                var data = new Native.COPYDATASTRUCT { Data = (IntPtr)1, Bytes = (text.Length + 1) * 2, Ptr = ptr };
+                var data = new Native.COPYDATASTRUCT { Data = (IntPtr)FilesMarker, Bytes = (text.Length + 1) * 2, Ptr = ptr };
                 Native.SendMessage(target, Native.WM_COPYDATA, IntPtr.Zero, ref data);
             }
             finally { Marshal.FreeHGlobal(ptr); }
+            return true;
+        }
+
+        /// <summary>From a second copy started with no files (a double-click on DragShift.exe): ask the running one to show
+        /// its Settings. False if none is running.</summary>
+        public static bool SendOpenSettings(string title = Title)
+        {
+            var target = Native.FindWindowEx((IntPtr)(-3), IntPtr.Zero, null, title);
+            if (target == IntPtr.Zero) return false;
+            // This copy was just started by the person, so it may let the running one come to the front.
+            Native.GetWindowThreadProcessId(target, out uint pid);
+            Native.AllowSetForegroundWindow((int)pid);
+            var data = new Native.COPYDATASTRUCT { Data = (IntPtr)SettingsMarker, Bytes = 0, Ptr = IntPtr.Zero };
+            Native.SendMessage(target, Native.WM_COPYDATA, IntPtr.Zero, ref data);
             return true;
         }
 

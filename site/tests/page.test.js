@@ -71,7 +71,7 @@ test("there is one way to skip the film and every still has a description", () =
 
 test("the page refuses to run inside another site's frame, and the test switches are off for visitors", () => {
   const boot = readFileSync(here("assets/js/boot.js"), "utf8");
-  const main = readFileSync(here("assets/js/main.js"), "utf8");
+  const main = readFileSync(here("assets/js/main.js"), "utf8").replace(/\r\n/g, "\n");
   assert.match(boot, /window\.top !== window\.self/);
   assert.match(html, /class="framed-note"[^>]*target="_top"/);
   assert.match(main, /const TESTING = params\.has\("rec"\) \|\| params\.has\("test"\)/);

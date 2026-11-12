@@ -13,6 +13,8 @@ namespace DragShift.Core
         public static class Keys
         {
             public const string Shift = "trigger.shift", Finger = "trigger.finger", Mouse = "trigger.mouse";
+            /// <summary>Which mouse buttons count (right, middle, back, forward). Not saved yet = all of them.</summary>
+            public const string MouseButtons = "trigger.mouse.buttons";
             public const string Hotkey = "hotkey.clipboard", Shelf = "shelf.side", Paused = "paused";
             public const string Favorites = "favorites", Hidden = "ring.hidden", LastActions = "last.actions";
             public const string OutputMode = "output.mode", OutputFolder = "output.folder", Quality = "quality";
@@ -90,6 +92,17 @@ namespace DragShift.Core
         public bool Finger => GetBool(Keys.Finger, true);
         public bool Mouse => GetBool(Keys.Mouse, true);
         public bool Paused => GetBool(Keys.Paused, false);
+
+        /// <summary>The mouse buttons the person has ticked (the Mouse switch above is separate and keeps these ticks).</summary>
+        public MouseTrigger TriggerButtons
+        {
+            get => MouseTriggers.Parse(Get(Keys.MouseButtons, null), MouseTrigger.All);
+            set => Set(Keys.MouseButtons, MouseTriggers.Format(value));
+        }
+
+        /// <summary>What the mouse watcher may react to right now. Nothing while the mouse switch is off or DragShift is
+        /// paused, so a button you turned off (or paused) always reaches the app you are dragging from.</summary>
+        public MouseTrigger ActiveTriggerButtons => Mouse && !Paused ? TriggerButtons : MouseTrigger.None;
         public List<string> Favorites => GetList(Keys.Favorites, Catalog.DefaultFavorites);
         public HashSet<string> Hidden => new HashSet<string>(GetList(Keys.Hidden, new string[0]));
         public PhotoSpec Photo => PhotoSpec.Parse(Get(Keys.Photo, new PhotoSpec().ToString()));
@@ -180,7 +193,7 @@ namespace DragShift.Core
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 var sb = new StringBuilder("# DragShift settings. Safe to edit while DragShift is closed.\r\n");
                 foreach (var kv in values.OrderBy(k => k.Key, StringComparer.Ordinal)) sb.Append(kv.Key).Append(" = ").Append(kv.Value).Append("\r\n");
-                Naming.Atomically(path, tmp => File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false)));
+                Naming.ReplaceAtomically(path, tmp => File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false)));
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
